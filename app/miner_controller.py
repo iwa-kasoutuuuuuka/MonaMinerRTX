@@ -5,6 +5,7 @@ import time
 import random
 import subprocess
 from PySide6.QtCore import QObject, Signal, QThread
+from app.miner.opencl_miner import OpenCLMinerWorker
 
 class SimulatorWorker(QThread):
     """
@@ -313,7 +314,7 @@ class MinerController(QObject):
             ok, msg = self.hardware_mgr.apply_power_limit(target_pwr)
             self.log_received.emit(f"[ハードウェア制御] {msg}", "info" if ok else "warn")
 
-        # Determine whether to run real binary or simulator
+        # Determine whether to run real binary, native OpenCL engine, or simulator
         has_custom = custom_path and os.path.exists(custom_path)
         if not use_sim and has_custom:
             if target_type == "solo":
@@ -338,6 +339,26 @@ class MinerController(QObject):
             self.worker.shares_update.connect(self.shares_changed)
             self.worker.log_message.connect(self.log_received)
             self.worker.process_exited.connect(self._on_process_exited)
+            self.worker.start()
+        elif not use_sim:
+            # Native Built-in OpenCL Miner Engine (Pure GPU JIT, no external binaries required)
+            self.worker = OpenCLMinerWorker(
+                mode=mode,
+                target_type=target_type,
+                device_target=device_target,
+                pool_url=pool_url,
+                wallet=wallet,
+                worker=worker,
+                solo_host=solo_host,
+                solo_port=solo_port,
+                solo_user=solo_user,
+                solo_pass=solo_pass,
+                cpu_threads=cpu_threads,
+                hardware_mgr=self.hardware_mgr
+            )
+            self.worker.hashrate_update.connect(self.hashrate_changed)
+            self.worker.shares_update.connect(self.shares_changed)
+            self.worker.log_message.connect(self.log_received)
             self.worker.start()
         else:
             self.worker = SimulatorWorker(

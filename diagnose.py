@@ -110,6 +110,33 @@ def run_diagnostics():
         print(f"    * {ev}")
     print("  -> OK")
 
+    print("\n[7/7] 独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック...")
+    try:
+        from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
+        platforms = OpenCLBackend.get_platforms()
+        if platforms:
+            p = platforms[0]
+            devs = OpenCLBackend.get_devices(p["id"])
+            if devs:
+                d = devs[0]
+                print(f"  - 検出OpenCL GPU: {d['name']} (Platform: {p['name']})")
+                print(f"  - Compute Units: {d['compute_units']} / VRAM: {d['global_mem_gb']} GB")
+                ctx = OpenCLContext(p["id"], d["id"])
+                kernel_path = os.path.join(os.path.dirname(__file__), "app", "miner", "kernels", "lyra2v2.cl")
+                with open(kernel_path, "r", encoding="utf-8") as f:
+                    src = f.read()
+                ctx.build_program(src)
+                ctx.get_kernel("search_lyra2v2")
+                ctx.release()
+                print("  - Lyra2REv2 OpenCL C カーネル JIT コンパイル: 成功 [OK]")
+                print("  -> OK (外部バイナリ不要でGPUネイティブ採掘可能)")
+            else:
+                print("  - OpenCL デバイス未検出")
+        else:
+            print("  - OpenCL プラットフォーム未検出")
+    except Exception as e:
+        print(f"  - OpenCL チェック失敗 (警告): {e}")
+
     hw.shutdown()
     print("\n" + "=" * 60)
     print("  すべての診断テストが正常に完了しました！[READY]")

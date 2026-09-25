@@ -7,12 +7,12 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v1.4.0.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v1.5.0.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
 
 def build():
     print("=" * 60)
-    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト")
+    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v1.5.0")
     print("=" * 60)
 
     # 1. Clean previous build
@@ -24,7 +24,8 @@ def build():
             print(f"  警告: 一部ファイルを削除できませんでした: {e}")
 
     # 2. Run PyInstaller
-    print("\n[2/5] PyInstaller によるコンパイル実行中 (PySide6 + NVML 同梱)...")
+    print("\n[2/5] PyInstaller によるコンパイル実行中 (PySide6 + NVML + 内蔵OpenCL 同梱)...")
+    kernel_src = os.path.join(PROJECT_DIR, "app", "miner", "kernels", "lyra2v2.cl")
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name=MonaMinerRTX",
@@ -39,6 +40,11 @@ def build():
         "--hidden-import=PySide6.QtCore",
         "--hidden-import=PySide6.QtGui",
         "--hidden-import=PySide6.QtWidgets",
+        "--hidden-import=app.miner",
+        "--hidden-import=app.miner.opencl_backend",
+        "--hidden-import=app.miner.opencl_miner",
+        "--hidden-import=app.miner.stratum_client",
+        f"--add-data={kernel_src};app/miner/kernels",
         "--distpath", DIST_DIR,
         "--workpath", os.path.join(PROJECT_DIR, "build"),
         os.path.join(PROJECT_DIR, "main.py")
@@ -50,8 +56,8 @@ def build():
         print(f"\n[エラー] PyInstaller のビルドに失敗しました (Code: {res.returncode})")
         sys.exit(res.returncode)
 
-    # 3. Copy documentation and helpers
-    print("\n[3/5] 配布用ドキュメント、アセットおよび起動バッチを同梱中...")
+    # 3. Copy documentation, helpers, and OpenCL kernels
+    print("\n[3/5] 配布用ドキュメント、アセット、カーネルおよび起動バッチを同梱中...")
     files_to_copy = ["README.md", "GEMINI.md", "diagnose.py", "run.bat"]
     for fname in files_to_copy:
         src = os.path.join(PROJECT_DIR, fname)
@@ -67,6 +73,15 @@ def build():
             shutil.rmtree(dst_assets)
         shutil.copytree(src_assets, dst_assets)
         print("  - コピー: assets/ (icon.png, icon.ico)")
+
+    # Copy app/miner/kernels directory
+    src_kernels = os.path.join(PROJECT_DIR, "app", "miner", "kernels")
+    dst_kernels = os.path.join(OUTPUT_FOLDER, "app", "miner", "kernels")
+    if os.path.exists(src_kernels):
+        if os.path.exists(dst_kernels):
+            shutil.rmtree(dst_kernels)
+        shutil.copytree(src_kernels, dst_kernels)
+        print("  - コピー: app/miner/kernels/ (lyra2v2.cl)")
 
     # Portable run.bat
     portable_bat = os.path.join(OUTPUT_FOLDER, "起動する.bat")

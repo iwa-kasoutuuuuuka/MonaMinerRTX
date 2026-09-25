@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX / RX v1.4.0 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v1.5.0 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -361,12 +361,12 @@ class MainWindow(QMainWindow):
         cfg_layout.addWidget(self.lbl_addr_status, 0, 2)
 
         # Options row
-        self.chk_simulator = QCheckBox("テスト・診断モード (実マイナー未導入でもUI・負荷テスト可能)")
-        self.chk_simulator.setChecked(self.config_mgr.get("use_simulator", True))
+        self.chk_simulator = QCheckBox("テスト・シミュレーションモード (実採掘を行わずUI・負荷のみ検証)")
+        self.chk_simulator.setChecked(self.config_mgr.get("use_simulator", False))
         self.chk_simulator.toggled.connect(lambda v: self.config_mgr.set("use_simulator", v))
         cfg_layout.addWidget(self.chk_simulator, 1, 1)
 
-        btn_browse_miner = QPushButton("外部マイナー指定 (ccminer / wildrig / sgminer 等)...")
+        btn_browse_miner = QPushButton("オプション: 外部マイナー指定 (ccminer / wildrig 等)...")
         btn_browse_miner.setStyleSheet("background-color: #334155; border: none; border-radius: 4px; padding: 4px 10px;")
         btn_browse_miner.clicked.connect(self._browse_custom_miner)
         cfg_layout.addWidget(btn_browse_miner, 1, 2)
@@ -488,33 +488,21 @@ class MainWindow(QMainWindow):
             use_sim = self.chk_simulator.isChecked()
             custom_path = self.config_mgr.get("custom_miner_path", "")
 
-            # If user wants real mining but no binary set
-            if not use_sim and (not custom_path or not os.path.exists(custom_path)):
-                is_amd = self.hw_mgr.device_info.get("is_amd", False)
-                miner_hint = "外部マイナー (wildrig / sgminer-gm / ccminer等)" if is_amd else "外部の ccminer.exe"
-                reply = QMessageBox.question(
-                    self, "外部マイナー未設定",
-                    f"{miner_hint} が指定されていません。\n"
-                    "テスト・診断モード (Simulator) で動作検証を行いますか？",
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if reply == QMessageBox.Yes:
-                    use_sim = True
-                    self.chk_simulator.setChecked(True)
-                else:
-                    return
-            elif not use_sim and custom_path:
+            # If custom miner path is specified, validate compatibility
+            if not use_sim and custom_path and os.path.exists(custom_path):
                 is_amd = self.hw_mgr.device_info.get("is_amd", False)
                 if is_amd and "ccminer" in os.path.basename(custom_path).lower():
                     reply = QMessageBox.warning(
                         self, "AMD GPU 互換性警告",
-                        "指定されたマイナーは 'ccminer' (NVIDIA CUDA専用) の可能性があります。\n"
-                        "AMD Radeon GPU で実マイニングを行う場合は、OpenCL 対応マイナー (wildrig-multi または sgminer-gm 等) を指定するか、テストモードをご利用ください。\n\n"
+                        "指定された外部マイナーは 'ccminer' (NVIDIA CUDA専用) の可能性があります。\n"
+                        "AMD Radeon GPU で外部マイナーを使用する場合は OpenCL 対応マイナー (wildrig / sgminer等) を指定するか、指定をクリアして内蔵独自マイナーをご利用ください。\n\n"
                         "このまま実行を試みますか？",
                         QMessageBox.Yes | QMessageBox.No
                     )
                     if reply == QMessageBox.No:
                         return
+            elif not use_sim:
+                self.console.append_log("⚡ 外部マイナー未指定: 独自内蔵 OpenCL マイナーエンジン (GPU直結) で採掘を開始します。", "info")
 
             mode = self.current_mode
             if mode == "auto":
@@ -544,7 +532,7 @@ class MainWindow(QMainWindow):
             self.card_power.set_value(f"{m.get('power_w', 0.0):.1f}")
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX / RX v1.4.0 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v1.5.0 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")

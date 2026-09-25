@@ -5,12 +5,13 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v1.4.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.4.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.4.0.zip)
+[![Release](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.5.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.0.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
+**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載しています。**
 
 </div>
 
@@ -18,7 +19,11 @@
 
 ## 🌟 主な特徴
 
-1. **全世代NVIDIA & AMD Radeon GPU & CPUスペック自動検知エンジン**:
+1. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要)**:
+   - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2（Blake256 -> Keccak256 -> CubeHash -> Lyra2 -> Skein -> BMW）カーネルをJITコンパイル＆並列実行。
+   - 外部から怪しい `.exe` をダウンロードして設定する手間が一切なく、ウイルス対策ソフトの誤検知も大幅に軽減。AMD Radeon でも NVIDIA GeForce でも、アプリを起動して「採掘開始」を押すだけでネイティブGPUマイニングが即座に始まります。
+
+2. **全世代NVIDIA & AMD Radeon GPU & CPUスペック自動検知エンジン**:
    - `NVML (NVIDIA Management Library)` および Windows WMI/CIM システム問い合わせにより、NVIDIA GeForce（RTX 5090〜GTX 1050Ti）および **AMD Radeon（RX 7900 XTX〜RX 470、Vegaシリーズ）** の型番、アーキテクチャ（Blackwell / Ada / Ampere / Turing / Pascal / RDNA 3 / RDNA 2 / RDNA 1 / Vega / Polaris）、VRAM、BIOS定格TDP、およびCPU物理/論理スレッド数をリアルタイム検出。
    - 搭載GPUのベンダー（NVIDIA / AMD）とアーキテクチャ特性に応じた最適な動作プロファイルを自動提案します。
 
@@ -151,7 +156,7 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v1.4.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.4.0.zip)** (約 46 MB)
+* **[🚀 MonaMinerRTX_Portable_v1.5.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.0.zip)** (約 46 MB)
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
@@ -172,17 +177,27 @@ PyInstaller により、必要なDLL・アプリアイコン・設定ファイ�
 python diagnose.py
 ```
 
-### 診断内容 (6ステップ全自動)
+### 診断内容 (7ステップ全自動)
 1. **Python 実行環境チェック** (3.9以上、OS互換性)
 2. **GUI ライブラリ (PySide6 / Qt6) チェック**
 3. **ハードウェア検知 (NVML & CPU)** (RTX 5080、VRAM、CPU物理/論理コア数、温度、CPU使用率)
 4. **最適化モード判定ロジック チェック** (GPU 250W + CPU 16T 推奨ロジック)
 5. **マイニングプール導通テスト (TCP Handshake)** (VIPPOOL port 8888 への疎通)
 6. **マイナー制御 & シミュレーション動作チェック** (ハイブリッド & ソロマイニングサイクル)
+7. **独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック** (GPU直結演算パイプライン)
 
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v1.5.0 (2026-09-25)
+* **⚡ 独自内蔵 OpenCL マイナーエンジンの完全統合 (No ccminer Dependency)**:
+  * 外部の `ccminer.exe` やサードパーティ製マイナーに一切依存せず、アプリ単体でGPUマイニングを実行する純粋ネイティブエンジンを開発・搭載。
+  * Windows標準の `OpenCL.dll` を `ctypes` で直接駆動し、外部Cコンパイラ（MSVC等）不要で Lyra2REv2（Blake256 -> Keccak256 -> CubeHash -> Lyra2 -> Skein -> BMW）カーネルを実行時にJITコンパイル。
+  * AMD Radeon（RDNA 3/2/1, Vega, Polaris）および NVIDIA GeForce（Blackwell, Ada, Ampere, Turing, Pascal）の両方でネイティブ並列採掘に対応。
+  * 純Pythonによる Stratum v1 プロトコルクライアント（`mining.subscribe`, `mining.authorize`, `mining.notify`, `mining.submit`）を内蔵し、プールから受け取ったジョブを直接GPUに供給してリアルタイム採掘・Share提出を実現。
+  * 外部マイナーが未指定の場合でも、ブロックされずに内蔵エンジンが即座に起動してマイニングを開始。
+  * 自己診断ツール（`diagnose.py`）に「[7/7] 独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック」を追加。
 
 ### v1.4.0 (2026-09-25)
 * **🔴 AMD Radeon GPU (RX 7000 / 6000 / 5000 / Vega / Polaris) フルサポート**:
@@ -263,11 +278,17 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v1.4.0.zip # 配布用ZIPアーカイブ
+│   └── MonaMinerRTX_Portable_v1.5.0.zip # 配布用ZIPアーカイブ
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
-    ├── hardware.py         # NVML/CPU ハードウェア検知 & 最適化推奨エンジン
-    ├── miner_controller.py # プロセス制御 (ccminer連携 & 内蔵シミュレータ)
+    ├── hardware.py         # NVML/WMI/CPU ハードウェア検知 & 推奨エンジン
+    ├── miner_controller.py # マイナー制御マネージャー
+    ├── miner/              # ⚡ 独自内蔵 OpenCL マイナーエンジン
+    │   ├── opencl_backend.py # Windows OpenCL.dll ctypes 低レベルバインディング
+    │   ├── opencl_miner.py   # GPUマイニングワーカー (QThread)
+    │   ├── stratum_client.py # 純Python Stratum v1 プロトコルクライアント
+    │   └── kernels/
+    │       └── lyra2v2.cl    # Lyra2REv2 JIT OpenCL C カーネル
     └── ui/
         ├── main_window.py  # メインウィンドウ
         ├── components.py   # メトリックカード・モードカード
