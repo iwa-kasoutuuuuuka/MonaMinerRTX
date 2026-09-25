@@ -5,19 +5,19 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.0.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.0.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)
+[![Release](https://img.shields.io/badge/Release-v2.1.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.1.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.0.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
-**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。さらにv2.0.0では「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しました。**
+**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。v2.1.0では「全ハッシュ段の完全ループアンロール」「高度JIT最適化フラグ」「最適ワークグループ化」によりカーネル演算性能が約1.8倍（+77%）に劇的向上しました。さらに「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しています。**
 
 </div>
 
 ---
 
-## 🌟 主な特徴 (v2.0.0)
+## 🌟 主な特徴 (v2.1.0)
 
 1. **🤖 スマート・アイドル自動採掘 (PC離席時のみ自動スタート)**:
    - Windows API (`GetLastInputInfo`) によりユーザーのキーボード・マウス操作をミリ秒単位で監視。
@@ -368,7 +368,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v2.0.0.zip # 配布用ZIPアーカイブ (約 46.4MB)
+│   └── MonaMinerRTX_Portable_v2.1.0.zip # 配布用ZIPアーカイブ (約 46.4MB)
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/WMI/CPU ハードウェア検知 & 推奨エンジン

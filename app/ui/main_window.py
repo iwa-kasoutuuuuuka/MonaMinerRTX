@@ -24,7 +24,7 @@ from app.miner.opencl_backend import OpenCLBackend
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MonaMiner RTX / RX v2.0.0 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self.setWindowTitle("MonaMiner RTX / RX v2.1.0 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(920, 640)
         self.resize(1120, 880)
         self.setStyleSheet(MAIN_STYLE)
@@ -739,7 +739,7 @@ class MainWindow(QMainWindow):
             description="Discord Webhook への接続に成功しました！採掘通知を受信できます。",
             color=0x38BDF8,
             fields=[
-                {"name": "バージョン", "value": "v2.0.0", "inline": True},
+                {"name": "バージョン", "value": "v2.1.0", "inline": True},
                 {"name": "ステータス", "value": "Ready", "inline": True}
             ]
         )
