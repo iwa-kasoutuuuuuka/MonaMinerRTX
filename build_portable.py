@@ -31,6 +31,8 @@ def build():
         "--windowed", # No black command prompt window for the GUI
         "--onedir",   # Portable directory (Fast launch & anti-virus friendly)
         "--clean",
+        "--icon=" + os.path.join(PROJECT_DIR, "assets", "icon.ico"),
+        "--version-file=" + os.path.join(PROJECT_DIR, "version_info.txt"),
         "--hidden-import=pynvml",
         "--hidden-import=psutil",
         "--hidden-import=PySide6",
