@@ -5,8 +5,8 @@
 # MonaMiner RTX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v1.2.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.0.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.0.0.zip)
+[![Release](https://img.shields.io/badge/Release-v1.3.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.3.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.3.0.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -151,7 +151,7 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v1.0.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.0.0.zip)** (約 45.8 MB)
+* **[🚀 MonaMinerRTX_Portable_v1.3.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.3.0.zip)** (約 45.8 MB)
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
@@ -185,12 +185,22 @@ python diagnose.py
 ## 📋 更新履歴 (Changelog)
 
 ### v1.3.0 (2026-09-25)
-* **全世代NVIDIA GPUへの動的対応 (Universal NVIDIA GPU Support)**:
-  * RTX 5080 だけでなく、RTX 5090 / 5070、RTX 40 / 30 / 20 シリーズ、GTX 16 / 10 シリーズ、およびノートPC版GPUの自動判別に対応。
-  * NVMLからGPU BIOSの実際の電力制限範囲（Min / Default / Max TDP）を取得し、GPUごとの最適Eco電力・定格電力を動的算出。
-  * GPUのCompute Capabilityおよびアーキテクチャ特性（Blackwell / Ada / Ampere / Turing / Pascal）に応じた動的ハッシュレート推定。
+* **🌟 全世代NVIDIA GPUへの動的対応 (Universal NVIDIA GPU Support)**:
+  * RTX 5080 固定仕様から脱却し、RTX 5090 / 5080 / 5070、RTX 40 / 30 / 20 シリーズ、GTX 16 / 10 シリーズ、およびノートPC版GPUの自動判別に対応。
+  * NVMLからGPU BIOSの実際の電力制限範囲（Min / Default / Max TDP）をリアルタイム取得し、各GPUに応じた最適Eco電力・定格電力を動的算出。
+  * GPUのCompute Capabilityおよびアーキテクチャ特性（Blackwell / Ada / Ampere / Turing / Pascal）に応じた高精度ハッシュレート・電力効率推定。
   * NVIDIA GPUが検出されない環境における「CPU専用マイニングモード」への自動安全適応。
-  * UIバナーおよび採掘デバイス選択ラジオボタンに検出GPU名を動的表示。
+  * UIバナーおよび採掘デバイス選択ラジオボタンに検出された実機GPU名を動的バインド。
+* **🎨 UIのレスポンシブ化 & 画面サイズ・高DPI文字潰れ根絶**:
+  * 全体を包括するスマート `QScrollArea` を導入。低解像度画面やWindows高DPI（125% / 150%拡大等）でもレイアウトが圧縮されず、快適に縦スクロール可能。
+  * メトリックカード、プロファイルカード、説明ラベルの自動折り返し（WordWrap）と最小高さ保護を適用。
+  * Windowsに最適化された可読性の高い `'Yu Gothic UI'` フォントと、専用ダークテーマスクロールバーを実装。
+* **💎 公式アプリアイコンの統合**:
+  * サイバー調モナコイン＆マイニングピッケルの専用アプリアイコン（PNG / マルチ解像度ICO）を作成。
+  * アプリヘッダーロゴ、タスクバー、Alt+Tab切り替え、およびWindows実行ファイル（EXE）にネイティブ埋め込み。
+* **🛡️ 堅牢性とエラーハンドリング強化**:
+  * グローバル例外ハンドラー（`sys.excepthook`）を搭載し、予期しないエラー発生時も原因をモーダル通知して安全に保護。
+  * 採掘停止時の電力効率メトリックおよびシェア数の完全初期化同期。
 
 ### v1.2.0 (2026-09-25)
 * **CPUスレッド数自動検知 & 最適モード連動機能**:
@@ -244,7 +254,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v1.0.0.zip # 配布用ZIPアーカイブ
+│   └── MonaMinerRTX_Portable_v1.3.0.zip # 配布用ZIPアーカイブ
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/CPU ハードウェア検知 & 最適化推奨エンジン

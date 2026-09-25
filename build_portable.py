@@ -7,7 +7,7 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v1.0.0.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v1.3.0.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
 
 def build():

@@ -16,7 +16,7 @@ from app.ui.styles import MAIN_STYLE
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MonaMiner RTX - モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self.setWindowTitle("MonaMiner RTX v1.3.0 - モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(880, 600)
         self.resize(1060, 840)
         self.setStyleSheet(MAIN_STYLE)
@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX v1.3.0 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -525,7 +525,7 @@ class MainWindow(QMainWindow):
             self.card_power.set_value(f"{m.get('power_w', 0.0):.1f}")
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX v1.3.0 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")
