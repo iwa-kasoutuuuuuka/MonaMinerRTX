@@ -162,7 +162,7 @@ def run_diagnostics():
 
     hw.shutdown()
     print("\n" + "=" * 60)
-    print("  すべての診断テストが正常に完了しました！[READY v2.0.0]")
+    print("  すべての診断テストが正常に完了しました！[READY v2.1.0]")
     print("=" * 60)
 
 if __name__ == "__main__":
