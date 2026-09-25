@@ -319,6 +319,8 @@ class MainWindow(QMainWindow):
 
         tab_pool_layout.addWidget(QLabel("ワーカー名:"), 0, 2)
         self.edit_worker = QLineEdit(self.config_mgr.get("worker_name", "rtx5080_worker"))
+        self.edit_worker.setPlaceholderText("例: アカウント名.worker1 (VIPPOOL登録名)")
+        self.edit_worker.setToolTip("VIPPOOL等の登録制プールでは「Web登録ユーザー名.ワーカー名」を入力してください。")
         self.edit_worker.textChanged.connect(lambda t: self.config_mgr.set("worker_name", t.strip()))
         tab_pool_layout.addWidget(self.edit_worker, 0, 3)
 

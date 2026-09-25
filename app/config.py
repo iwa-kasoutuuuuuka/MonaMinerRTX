@@ -6,12 +6,12 @@ CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 DEFAULT_POOLS = [
     {
-        "name": "VIPPOOL (国内最大・稼働中代表プール)",
+        "name": "VIPPOOL (国内最大・要Web登録 - vippool.net)",
         "url": "stratum+tcp://stratum1.vippool.net:8888",
         "doc": "https://vippool.net"
     },
     {
-        "name": "VIPPOOL 予備 (vippool.net:8888)",
+        "name": "VIPPOOL 予備 (要Web登録 - vippool.net:8888)",
         "url": "stratum+tcp://vippool.net:8888",
         "doc": "https://vippool.net"
     },
