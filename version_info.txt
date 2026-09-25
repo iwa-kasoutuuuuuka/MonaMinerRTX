@@ -5,8 +5,8 @@
 
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 5, 0, 0),
-    prodvers=(1, 5, 0, 0),
+    filevers=(1, 5, 1, 0),
+    prodvers=(1, 5, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -22,13 +22,13 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'MonaCoin Community Project'),
             StringStruct('FileDescription', 'MonaMiner RTX / RX - Monacoin GPU/CPU Mining Studio'),
-            StringStruct('FileVersion', '1.5.0.0'),
+            StringStruct('FileVersion', '1.5.1.0'),
             StringStruct('InternalName', 'MonaMinerRTX'),
             StringStruct('LegalCopyright', 'Copyright (C) 2026 MonaCoin Community. Open Source under MIT License.'),
             StringStruct('OriginalFilename', 'MonaMinerRTX.exe'),
             StringStruct('ProductName', 'MonaMiner RTX / RX'),
-            StringStruct('ProductVersion', '1.5.0.0'),
-            StringStruct('Comments', 'A graphical user interface for Monacoin mining, with native OpenCL JIT GPU engine for NVIDIA GeForce & AMD Radeon.')
+            StringStruct('ProductVersion', '1.5.1.0'),
+            StringStruct('Comments', 'A graphical user interface for Monacoin mining, with optimized native OpenCL GPU engine.')
           ]
         ),
         StringTable(
@@ -36,13 +36,13 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'MonaCoin Community Project'),
             StringStruct('FileDescription', 'MonaMiner RTX / RX - Monacoin GPU/CPU Mining Studio'),
-            StringStruct('FileVersion', '1.5.0.0'),
+            StringStruct('FileVersion', '1.5.1.0'),
             StringStruct('InternalName', 'MonaMinerRTX'),
             StringStruct('LegalCopyright', 'Copyright (C) 2026 MonaCoin Community. Open Source under MIT License.'),
             StringStruct('OriginalFilename', 'MonaMinerRTX.exe'),
             StringStruct('ProductName', 'MonaMiner RTX / RX'),
-            StringStruct('ProductVersion', '1.5.0.0'),
-            StringStruct('Comments', 'A graphical user interface for Monacoin mining, with native OpenCL JIT GPU engine for NVIDIA GeForce & AMD Radeon.')
+            StringStruct('ProductVersion', '1.5.1.0'),
+            StringStruct('Comments', 'A graphical user interface for Monacoin mining, with optimized native OpenCL GPU engine.')
           ]
         )
       ]

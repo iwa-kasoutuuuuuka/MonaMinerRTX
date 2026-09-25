@@ -80,9 +80,10 @@ class OpenCLMinerWorker(QThread):
             with open(kernel_path, "r", encoding="utf-8") as f:
                 src = f.read()
 
-            self.ctx.build_program(src)
+            # Compile with OpenCL performance optimizations (-cl-mad-enable -cl-no-signed-zeros)
+            self.ctx.build_program(src, options="-cl-mad-enable -cl-no-signed-zeros")
             kernel = self.ctx.get_kernel("search_lyra2v2")
-            self.log_message.emit("✓ JIT コンパイル成功！ GPU演算パイプライン準備完了", "success")
+            self.log_message.emit("✓ JIT コンパイル成功！ (GPU演算・MAD最適化パイプライン準備完了)", "success")
 
         except Exception as e:
             self.log_message.emit(f"OpenCL 初期化失敗: {e}", "error")
@@ -90,7 +91,6 @@ class OpenCLMinerWorker(QThread):
 
         # 3. Setup Stratum Client
         if self.target_type != "solo":
-            # Parse pool URL e.g. stratum+tcp://stratum1.vippool.net:8888
             clean_url = self.pool_url.replace("stratum+tcp://", "").replace("tcp://", "")
             if ":" in clean_url:
                 host, port_str = clean_url.split(":", 1)
@@ -114,15 +114,16 @@ class OpenCLMinerWorker(QThread):
                 self.ctx.release()
                 return
 
-        # 4. Intensity & Workgroup settings based on profile
+        # 4. Intensity & Adaptive Workgroup settings
         recs = self.hardware_mgr.get_mode_recommendation()
         mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
         intensity = mode_data.get("intensity", 20)
-        batch_size = 1 << min(22, max(16, intensity)) # 65K to 4M nonces per dispatch
         local_wg = min(256, d.get("max_work_group_size", 256))
+        # Initial batch size (65K to 1M)
+        batch_size = max(local_wg * 16, 1 << min(20, max(16, intensity)))
 
         self.log_message.emit(
-            f"採掘プロファイル: {self.mode.upper()} (Intensity: {intensity} / BatchSize: {batch_size:,})",
+            f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {batch_size:,} / WG: {local_wg} / 適応型ディスパッチ有効)",
             "info"
         )
 
@@ -135,47 +136,56 @@ class OpenCLMinerWorker(QThread):
         total_hashes_window = 0
         t_start_window = time.perf_counter()
 
+        last_loaded_header_key = None
+
         while self._running:
             # Check current job
             current_job = self.stratum.current_job if self.stratum else None
             current_target = self.stratum.target if self.stratum else 0x00000000FFFF0000000000000000000000000000000000000000000000000000
 
             if not current_job and self.target_type != "solo":
-                # Waiting for first job from pool
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
-            # Target upper 32-bit for quick kernel thresholding
+            # Target upper 32-bit threshold
             target_high = (current_target >> 224) & 0xFFFFFFFF
             if target_high == 0:
                 target_high = 0x0000FFFF
 
-            # Build 76-byte header
+            # Build 76-byte header only when job or extranonce2 changes
             if current_job:
                 en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}"
-                header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+                job_key = (current_job.job_id, en2_hex, current_job.ntime)
+                if job_key != last_loaded_header_key:
+                    header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+                    c_header = (c_uint * 19).from_buffer_copy(header_76)
+                    self.ctx.write_buffer(buf_header, c_header, 19 * 4)
+                    last_loaded_header_key = job_key
+                    base_nonce = 0 # Reset nonce range for new block template
             else:
-                header_76 = b"\x00" * 76
                 en2_hex = "0000"
+                if last_loaded_header_key != "solo_dummy":
+                    header_76 = b"\x00" * 76
+                    c_header = (c_uint * 19).from_buffer_copy(header_76)
+                    self.ctx.write_buffer(buf_header, c_header, 19 * 4)
+                    last_loaded_header_key = "solo_dummy"
 
-            # Load header to GPU
-            c_header = (c_uint * 19).from_buffer_copy(header_76)
-            self.ctx.write_buffer(buf_header, c_header, 19 * 4)
-
-            # Clear found count
+            # Clear found count (4 bytes)
             c_zero = (c_uint * 1)(0)
             self.ctx.write_buffer(buf_found_count, c_zero, 4)
 
-            # Set kernel args
+            # Set kernel arguments
             self.ctx.set_arg_mem(kernel, 0, buf_header)
             self.ctx.set_arg_uint(kernel, 1, base_nonce)
             self.ctx.set_arg_uint(kernel, 2, target_high)
             self.ctx.set_arg_mem(kernel, 3, buf_found_nonce)
             self.ctx.set_arg_mem(kernel, 4, buf_found_count)
 
-            # Dispatch GPU kernel
+            # Measure dispatch duration to dynamically adapt batch size towards ~100ms
+            t_disp_start = time.perf_counter()
             self.ctx.run_kernel_1d(kernel, batch_size, local_wg)
             self.ctx.finish()
+            disp_elapsed = time.perf_counter() - t_disp_start
 
             # Check if any nonce met target
             c_count = (c_uint * 1)(0)
@@ -197,6 +207,13 @@ class OpenCLMinerWorker(QThread):
 
             base_nonce = (base_nonce + batch_size) & 0xFFFFFFFF
             total_hashes_window += batch_size
+
+            # Adaptive batch tuning (Target ~80-120ms to eliminate stale shares)
+            if disp_elapsed > 0.001:
+                ideal_batch = int(batch_size * (0.10 / disp_elapsed))
+                # Smooth update
+                batch_size = max(local_wg * 16, min(4194304, int(batch_size * 0.7 + ideal_batch * 0.3)))
+                batch_size = (batch_size // local_wg) * local_wg # Ensure WG alignment
 
             # Periodic telemetry update (every ~1 sec)
             now = time.perf_counter()

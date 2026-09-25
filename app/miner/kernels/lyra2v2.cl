@@ -52,7 +52,7 @@ __constant uint32_t BLAKE_C[16] = {
     v[b] = ROTR32(v[b] ^ v[c], 7); \
 } while (0)
 
-void blake256_compress(uint32_t state[8], const uint32_t m[16]) {
+inline void blake256_compress(uint32_t state[8], const uint32_t m[16]) {
     uint32_t v[16];
     for (int i = 0; i < 8; i++) v[i] = state[i];
     for (int i = 0; i < 4; i++) v[i + 8] = BLAKE_C[i];
@@ -84,7 +84,7 @@ __constant ulong KECCAK_RC[24] = {
     0x8000000080008081UL, 0x8000000000008080UL, 0x0000000080000001UL, 0x8000000080008008UL
 };
 
-void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
+inline void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
     // Standard Keccak-f[1600] 24 rounds permutation
     // For 32-byte input to 32-byte output
     ulong state[25] = {0};
@@ -147,7 +147,7 @@ void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
 }
 
 // --- CUBEHASH 256 ---
-void cubehash256_hash(const uint32_t in[8], uint32_t out[8]) {
+inline void cubehash256_hash(const uint32_t in[8], uint32_t out[8]) {
     uint32_t s[32];
     for (int i = 0; i < 32; i++) s[i] = 0;
     s[0] = 16; // 16 rounds
@@ -191,7 +191,7 @@ void cubehash256_hash(const uint32_t in[8], uint32_t out[8]) {
 }
 
 // --- LYRA2 (nRows = 2, nCols = 330) ---
-void lyra2_sponge(ulong state[16]) {
+inline void lyra2_sponge(ulong state[16]) {
     for (int round = 0; round < 12; round++) {
         // Reduced round sponge
         state[0] ^= state[1]; state[2] ^= state[3];
@@ -200,7 +200,7 @@ void lyra2_sponge(ulong state[16]) {
     }
 }
 
-void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
+inline void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
     ulong state[16] = {0};
     for (int i = 0; i < 4; i++) {
         state[i] = ((ulong)in[i*2+1] << 32) | in[i*2];
@@ -221,7 +221,7 @@ void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
 }
 
 // --- SKEIN 256 ---
-void skein256_hash(const uint32_t in[8], uint32_t out[8]) {
+inline void skein256_hash(const uint32_t in[8], uint32_t out[8]) {
     ulong s[4] = {0x499422ab41d4b840UL, 0xaddb89ec5a9c9453UL, 0x9e548683815046e3UL, 0x39c1a54ff93fb1bdUL};
     ulong m[4];
     for (int i = 0; i < 4; i++) m[i] = ((ulong)in[i*2+1] << 32) | in[i*2];
@@ -240,7 +240,7 @@ void skein256_hash(const uint32_t in[8], uint32_t out[8]) {
 }
 
 // --- BMW 256 (Blue Midnight Wish) ---
-void bmw256_hash(const uint32_t in[8], uint32_t out[8]) {
+inline void bmw256_hash(const uint32_t in[8], uint32_t out[8]) {
     uint32_t s[16];
     for (int i = 0; i < 8; i++) s[i] = in[i];
     for (int i = 8; i < 16; i++) s[i] = 0x5a827999;
@@ -254,6 +254,7 @@ void bmw256_hash(const uint32_t in[8], uint32_t out[8]) {
 
 /*
  * Main Lyra2REv2 Nonce Search Kernel
+ * Optimized with Ping-Pong register buffers (stateA/stateB) to maximize GPU occupancy.
  */
 __kernel void search_lyra2v2(
     __constant uint32_t *header_prefix, // 19 uints = 76 bytes
@@ -272,33 +273,31 @@ __kernel void search_lyra2v2(
     }
     header[19] = nonce;
 
-    // Lyra2REv2 Pipeline
-    uint32_t h1[8], h2[8], h3[8], h4[8], h5[8], h6[8];
+    // Lyra2REv2 Pipeline with 2-buffer Ping-Pong to minimize register pressure
+    uint32_t stateA[8];
+    uint32_t stateB[8];
 
-    // 1. Blake 256 on 80-byte header
-    uint32_t state[8];
-    for (int i = 0; i < 8; i++) state[i] = BLAKE_IV[i];
-    blake256_compress(state, header);
-    for (int i = 0; i < 8; i++) h1[i] = state[i];
+    // 1. Blake 256 on 80-byte header -> Output into stateA
+    for (int i = 0; i < 8; i++) stateA[i] = BLAKE_IV[i];
+    blake256_compress(stateA, header);
 
-    // 2. Keccak 256
-    keccak256_hash(h1, h2);
+    // 2. Keccak 256: stateA -> stateB
+    keccak256_hash(stateA, stateB);
 
-    // 3. CubeHash 256
-    cubehash256_hash(h2, h3);
+    // 3. CubeHash 256: stateB -> stateA
+    cubehash256_hash(stateB, stateA);
 
-    // 4. Lyra2
-    lyra2v2_core(h3, h4);
+    // 4. Lyra2: stateA -> stateB
+    lyra2v2_core(stateA, stateB);
 
-    // 5. Skein 256
-    skein256_hash(h4, h5);
+    // 5. Skein 256: stateB -> stateA
+    skein256_hash(stateB, stateA);
 
-    // 6. BMW 256
-    bmw256_hash(h5, h6);
+    // 6. BMW 256: stateA -> stateB
+    bmw256_hash(stateA, stateB);
 
     // Check against target (upper 32 bits comparison)
-    // h6[7] represents the most significant 32 bits in little-endian representation
-    if (h6[7] < target_high) {
+    if (stateB[7] < target_high) {
         uint32_t idx = atomic_inc(found_count);
         if (idx == 0) {
             found_nonce[0] = nonce;

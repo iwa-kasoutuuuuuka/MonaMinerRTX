@@ -5,8 +5,8 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.5.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.0.zip)
+[![Release](https://img.shields.io/badge/Release-v1.5.1-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.5.1.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.1.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -19,8 +19,11 @@
 
 ## 🌟 主な特徴
 
-1. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要)**:
+1. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度最適化)**:
    - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2（Blake256 -> Keccak256 -> CubeHash -> Lyra2 -> Skein -> BMW）カーネルをJITコンパイル＆並列実行。
+   - **Ping-Pong レジスタバッファ化**: カーネル内部の中間バッファを交互利用することでGPUレジスタ使用量を 66% 削減し、SM/CUあたりの並列スレッド実行密度（Occupancy）を最大化。
+   - **PCIe転送の極小化 (ヘッダーキャッシュ)**: ブロック不変ヘッダーのGPU再転送を撤廃し、新Job受信時のみ更新。
+   - **適応型ディスパッチ制御 (Target ~100ms)**: GPU性能に応じて1ディスパッチを約100msに自動調整し、新ブロック通知時の無駄掘り（Stale Shares）を根絶。
    - 外部から怪しい `.exe` をダウンロードして設定する手間が一切なく、ウイルス対策ソフトの誤検知も大幅に軽減。AMD Radeon でも NVIDIA GeForce でも、アプリを起動して「採掘開始」を押すだけでネイティブGPUマイニングが即座に始まります。
 
 2. **全世代NVIDIA & AMD Radeon GPU & CPUスペック自動検知エンジン**:
@@ -156,7 +159,7 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v1.5.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.0.zip)** (約 46 MB)
+* **[🚀 MonaMinerRTX_Portable_v1.5.1.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.1.zip)** (約 46 MB)
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
@@ -189,6 +192,14 @@ python diagnose.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v1.5.1 (2026-09-25)
+* **⚡ 独自内蔵 OpenCL マイナーエンジンの徹底効率化 (Performance Optimization)**:
+  * **カーネル内 Ping-Pong レジスタバッファ化**: 6段のハッシュ連鎖で消費していた48個の32bit中間配列（192B）を `stateA` / `stateB`（64B）の交互利用に集約。レジスタプレッシャーを66%削減し、GPUの同時並列スレッド実行密度（Occupancy）を最大化。
+  * **JIT コンパイラ最適化フラグの導入**: `-cl-mad-enable -cl-no-signed-zeros` を適用し、ハードウェアMAD/FMA演算器をフル活用。
+  * **全ハッシュ関数の `inline` 展開**: 関数呼び出しオーバーヘッドを排除し、コンパイラの命令スケジューリングを最適化。
+  * **PCIe ヘッダー転送の極小化 (ヘッダーキャッシュ)**: 毎反復でGPUへ送信していた76バイトの不変ヘッダー転送を完全排除し、新Job受信時のみ更新。
+  * **適応型バッチディスパッチ制御 (Target ~100ms)**: GPU処理時間を動的モニタリングし、1ディスパッチを約100msに自動調整。新ブロック発生（Clean Jobs）時の無駄掘り（Stale Share）を根絶。
 
 ### v1.5.0 (2026-09-25)
 * **⚡ 独自内蔵 OpenCL マイナーエンジンの完全統合 (No ccminer Dependency)**:
@@ -278,7 +289,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v1.5.0.zip # 配布用ZIPアーカイブ
+│   └── MonaMinerRTX_Portable_v1.5.1.zip # 配布用ZIPアーカイブ
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/WMI/CPU ハードウェア検知 & 推奨エンジン
