@@ -26,7 +26,16 @@ def main():
     app.setApplicationName("MonaMiner RTX")
     app.setOrganizationName("MonaCoinCommunity")
 
+    # Set application icon
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+    if os.path.exists(icon_path):
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(icon_path))
+
     window = MainWindow()
+    if os.path.exists(icon_path):
+        from PySide6.QtGui import QIcon
+        window.setWindowIcon(QIcon(icon_path))
     window.show()
 
     sys.exit(app.exec())

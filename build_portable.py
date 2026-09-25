@@ -51,13 +51,22 @@ def build():
         sys.exit(res.returncode)
 
     # 3. Copy documentation and helpers
-    print("\n[3/5] 配布用ドキュメントおよび起動バッチを同梱中...")
+    print("\n[3/5] 配布用ドキュメント、アセットおよび起動バッチを同梱中...")
     files_to_copy = ["README.md", "GEMINI.md", "diagnose.py", "run.bat"]
     for fname in files_to_copy:
         src = os.path.join(PROJECT_DIR, fname)
         if os.path.exists(src):
             shutil.copy2(src, OUTPUT_FOLDER)
             print(f"  - コピー: {fname}")
+
+    # Copy assets directory
+    src_assets = os.path.join(PROJECT_DIR, "assets")
+    dst_assets = os.path.join(OUTPUT_FOLDER, "assets")
+    if os.path.exists(src_assets):
+        if os.path.exists(dst_assets):
+            shutil.rmtree(dst_assets)
+        shutil.copytree(src_assets, dst_assets)
+        print("  - コピー: assets/ (icon.png, icon.ico)")
 
     # Portable run.bat
     portable_bat = os.path.join(OUTPUT_FOLDER, "起動する.bat")

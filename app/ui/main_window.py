@@ -53,14 +53,27 @@ class MainWindow(QMainWindow):
         banner_layout = QHBoxLayout(banner)
         banner_layout.setContentsMargins(12, 8, 12, 8)
 
+        # Icon & Title Header
+        header_left = QHBoxLayout()
+        header_left.setSpacing(12)
+
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            from PySide6.QtGui import QPixmap
+            lbl_logo = QLabel()
+            pix = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            lbl_logo.setPixmap(pix)
+            header_left.addWidget(lbl_logo)
+
         title_layout = QVBoxLayout()
-        title = QLabel("🪙 MonaMiner RTX (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX (Lyra2REv2)")
         title.setObjectName("title")
         subtitle = QLabel("RTX 5080 (Blackwell) & CPU ハイブリッド対応 | プール / ソロマイニング両用")
         subtitle.setObjectName("subtitle")
         title_layout.addWidget(title)
         title_layout.addWidget(subtitle)
-        banner_layout.addLayout(title_layout)
+        header_left.addLayout(title_layout)
+        banner_layout.addLayout(header_left)
 
         banner_layout.addStretch()
 
