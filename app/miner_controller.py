@@ -64,14 +64,18 @@ class SimulatorWorker(QThread):
             self.log_message.emit(f"Stratum pool: 難易度(Diff) 0.052 が設定されました", "info")
 
         # Hardware Initialization
+        hw_info = self.hardware_mgr.device_info
+        recs = self.hardware_mgr.get_mode_recommendation()
+        mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
+
         if self.device_target in ["gpu", "hybrid"]:
-            self.log_message.emit(f"NVIDIA GeForce RTX 5080 (Blackwell sm_12.0) 84 SM 検出・初期化完了", "success")
-            if self.mode == "eco":
-                self.log_message.emit("⚡ GPU Power Limit: 250W (スイートスポット) / Intensity: 21 を適用", "info")
-            elif self.mode == "perf":
-                self.log_message.emit("⚡ GPU Power Limit: 360W (定格最大) / Intensity: 24 を適用", "warn")
-            elif self.mode == "quiet":
-                self.log_message.emit("⚡ GPU Intensity: 16 (低負荷・静音モード) を適用", "info")
+            self.log_message.emit(
+                f"{hw_info['name']} ({hw_info['arch_name']}) 検出・初期化完了", "success"
+            )
+            self.log_message.emit(
+                f"⚡ GPU Power: {mode_data['target_pwr_w']:.0f}W / Intensity: {mode_data['intensity']} を適用",
+                "info" if self.mode != "perf" else "warn"
+            )
 
         if self.device_target in ["cpu", "hybrid"]:
             self.log_message.emit(f"CPU マイニングワーカー初期化: {self.cpu_threads} スレッド稼働 (AVX-512 / AVX2 最適化)", "success")
@@ -80,15 +84,8 @@ class SimulatorWorker(QThread):
         base_gpu_hr = 0.0
         base_gpu_pwr = 0.0
         if self.device_target in ["gpu", "hybrid"]:
-            if self.mode == "eco":
-                base_gpu_hr = 172.0
-                base_gpu_pwr = 250.0
-            elif self.mode == "perf":
-                base_gpu_hr = 218.0
-                base_gpu_pwr = 360.0
-            elif self.mode == "quiet":
-                base_gpu_hr = 88.0
-                base_gpu_pwr = 160.0
+            base_gpu_hr = mode_data.get("est_gpu_hr", 172.0)
+            base_gpu_pwr = mode_data.get("target_pwr_w", 250.0)
 
         base_cpu_hr = 0.0
         base_cpu_pwr = 0.0

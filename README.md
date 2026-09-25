@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**NVIDIA GeForce RTX 5080 (Blackwell アーキテクチャ)** および **多コアCPU（Ryzen等）** に特化した、モナコイン向けハイブリッドGUIマイナーです。
+**NVIDIA GeForce RTX 50シリーズ (Blackwell)、RTX 40 / 30 / 20シリーズ、GTX 16 / 10シリーズ、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
 
 </div>
 
@@ -18,21 +18,21 @@
 
 ## 🌟 主な特徴
 
-1. **PCスペック自動検知 & 最適化推奨エンジン**:
-   - `NVML (NVIDIA Management Library)` および CPUトポロジー検知により、GPU型番（RTX 5080 16GB GDDR7）および CPUコア数（物理16コア / 論理32スレッド等）をリアルタイム検出。
-   - ハードウェア特性に基づき、最も電力効率（Hash/Watt）が高い動作設定を自動提案します。
+1. **全世代NVIDIA GPU & CPUスペック自動検知エンジン**:
+   - `NVML (NVIDIA Management Library)` および CPUトポロジー検知により、GPU型番（RTX 5090/5080/4090/4070/3060/GTX 1660等）、アーキテクチャ（Blackwell / Ada / Ampere / Turing / Pascal）、VRAM、BIOS定格TDP許容範囲（Min〜Default〜Max W）、およびCPU物理/論理スレッド数をリアルタイム検出。
+   - 搭載GPUの世代と電力制約に基づき、最も電力効率（Hash/Watt）が高い動作設定を自動提案します。
 
-2. **3つの最適化動作プロファイル (GPU & CPU 自動連動)**:
+2. **3つの最適化動作プロファイル (実機GPU & CPU 自動連動)**:
    - 🍃 **電力効率モード (Eco / Sweet Spot - 推奨)**:
-     - GPU: Power Limit を 250W（最小設定値）に制限、Intensity: 21。
-     - CPU: 物理コア数（16スレッド）を割り当て、SMT（同時マルチスレッディング）のキャッシュ競合を回避。
-     - RTX 5080の巨大L2キャッシュとCPU物理コアの専有により、発熱と電気代を大幅削減しながら最高峰のワットパフォーマンス（約 0.70 MH/W）を実現。
+     - GPU: 実機BIOSが許容する最小電力制限（例: 5080なら250W、4070なら140W、3060なら120W等）に自動設定、Intensity: 20〜21。
+     - CPU: 物理コア数（例: 16スレッド）を割り当て、SMT（同時マルチスレッディング）のキャッシュ競合を回避。
+     - GPUのキャッシュ効率とCPU物理コアの専有により、発熱と電気代を大幅削減しながら最高峰のワットパフォーマンスを実現。
    - ⚡ **最大計算力モード (Max Hashrate)**:
-     - GPU: 360W 定格フルパワー、Intensity: 24（全84 SM / 10,752 CUDAコアをフル稼働）。
-     - CPU: OS/GPU用に2コアを残した最大スレッド数（30スレッド）を投入。
-     - GPUとCPUの全能力を解き放つ極限ハッシュレート構成（合算 約 230〜240 MH/s）。
-   - ☕ **ながらマイニングモード (Quiet / Background)**:
-     - GPU負荷を30〜40%に抑え、CPUも25%（8スレッド）に制限。
+     - GPU: 定格最大TDP（例: 5080なら360W、4070なら220W等）フルパワー、Intensity: 22〜24。
+     - CPU: OS/GPU用に2コアを残した最大スレッド数を投入。
+     - GPUとCPUの全能力を解き放つ極限ハッシュレート構成。
+   - ☕ **ながらマイニングモード (Quiet / Daily)**:
+     - GPU負荷を30〜40%に抑え（ノートPCでは自動推奨）、CPUも25%（低スレッド）に制限。
      - ファンの静音を維持し、日常のPC作業（Web閲覧・動画視聴・ゲーム等）を一切妨げずに裏で静かにマイニング。
 
 3. **🏊 プールマイニング & 🏠 ソロマイニング 両対応**:
@@ -183,6 +183,14 @@ python diagnose.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v1.3.0 (2026-09-25)
+* **全世代NVIDIA GPUへの動的対応 (Universal NVIDIA GPU Support)**:
+  * RTX 5080 だけでなく、RTX 5090 / 5070、RTX 40 / 30 / 20 シリーズ、GTX 16 / 10 シリーズ、およびノートPC版GPUの自動判別に対応。
+  * NVMLからGPU BIOSの実際の電力制限範囲（Min / Default / Max TDP）を取得し、GPUごとの最適Eco電力・定格電力を動的算出。
+  * GPUのCompute Capabilityおよびアーキテクチャ特性（Blackwell / Ada / Ampere / Turing / Pascal）に応じた動的ハッシュレート推定。
+  * NVIDIA GPUが検出されない環境における「CPU専用マイニングモード」への自動安全適応。
+  * UIバナーおよび採掘デバイス選択ラジオボタンに検出GPU名を動的表示。
 
 ### v1.2.0 (2026-09-25)
 * **CPUスレッド数自動検知 & 最適モード連動機能**:

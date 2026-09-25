@@ -80,7 +80,16 @@ class MainWindow(QMainWindow):
         title_layout.setSpacing(2)
         title = QLabel("MonaMiner RTX (Lyra2REv2)")
         title.setObjectName("title")
-        subtitle = QLabel("RTX 5080 (Blackwell) & 多コアCPU ハイブリッド | プール / ソロ両用")
+
+        hw_info = self.hw_mgr.device_info
+        cpu_info = self.hw_mgr.cpu_info
+
+        if self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
+            sub_text = f"NVIDIA GPU ({hw_info['short_name']}) & 多コアCPU ハイブリッド | プール / ソロ両用"
+        else:
+            sub_text = f"多コアCPU ({cpu_info['logical_cores']}T) マイニングスタジオ | プール / ソロ両用"
+
+        subtitle = QLabel(sub_text)
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
         title_layout.addWidget(title)
@@ -89,13 +98,14 @@ class MainWindow(QMainWindow):
         banner_layout.addLayout(header_left, stretch=1)
 
         # Hardware Badge & Admin Status
-        hw_info = self.hw_mgr.device_info
-        cpu_info = self.hw_mgr.cpu_info
         badge_layout = QVBoxLayout()
         badge_layout.setSpacing(4)
         badge_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        lbl_hw = QLabel(f"⚡ {hw_info['name']} | 🧠 CPU ({cpu_info['logical_cores']}T)")
+        if self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
+            lbl_hw = QLabel(f"⚡ {hw_info['name']} ({hw_info['arch_name']}) | 🧠 CPU ({cpu_info['logical_cores']}T)")
+        else:
+            lbl_hw = QLabel(f"🧠 CPU 専用 ({cpu_info['logical_cores']} Threads)")
         lbl_hw.setObjectName("badge_rtx")
         lbl_hw.setWordWrap(True)
         badge_layout.addWidget(lbl_hw)
@@ -146,17 +156,25 @@ class MainWindow(QMainWindow):
         dev_layout.addWidget(lbl_dev_title)
 
         dev_btn_layout = QHBoxLayout()
-        self.btn_dev_gpu = QRadioButton("⚡ GPU のみ (RTX 5080)")
+        has_gpu = self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0
+        gpu_label = f"⚡ GPU のみ ({hw_info['short_name']})" if has_gpu else "⚡ GPU (未検出)"
+        self.btn_dev_gpu = QRadioButton(gpu_label)
         self.btn_dev_cpu = QRadioButton("🧠 CPU のみ")
         self.btn_dev_hybrid = QRadioButton("🚀 ハイブリッド (GPU+CPU)")
-        
+
+        if not has_gpu:
+            self.btn_dev_gpu.setEnabled(False)
+            self.btn_dev_hybrid.setEnabled(False)
+
         self.dev_group = QButtonGroup(self)
         self.dev_group.addButton(self.btn_dev_gpu, 1)
         self.dev_group.addButton(self.btn_dev_cpu, 2)
         self.dev_group.addButton(self.btn_dev_hybrid, 3)
 
         saved_dev = self.config_mgr.get("device_target", "gpu")
-        if saved_dev == "cpu":
+        if not has_gpu:
+            self.btn_dev_cpu.setChecked(True)
+        elif saved_dev == "cpu":
             self.btn_dev_cpu.setChecked(True)
         elif saved_dev == "hybrid":
             self.btn_dev_hybrid.setChecked(True)
