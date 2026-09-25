@@ -513,6 +513,7 @@ class MainWindow(QMainWindow):
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")
             self.btn_toggle_mining.setStyle(self.btn_toggle_mining.style())
             self.card_hashrate.set_value("0.0")
+            self.card_eff.set_value("--")
         else:
             self.btn_toggle_mining.setObjectName("stop_btn")
             self.btn_toggle_mining.setText("⏹ 採掘停止 (Stop Mining)")
