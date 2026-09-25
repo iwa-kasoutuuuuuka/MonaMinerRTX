@@ -99,10 +99,14 @@
 画面中央のタブで接続先を切り替えます。
 
 * **タブ 1: 🏊 プールマイニング (Stratum)**
-  1. **マイニング プール**: ドロップダウンから接続先を選択します（デフォルト: `VIPPOOL (国内最大・稼働中代表プール)`）。
-  2. **ワーカー名**:
-     - **VIPPOOL 等のアカウント登録制プール**: Webサイトで登録した `アカウント名.ワーカー名`（例: `myuser.worker1`）を入力します。
-     - **アドレス直接採掘プール (YIIEMP等)**: 単にワーカー識別名（例: `worker1`）を入力すれば、受取アドレスと自動連結されて接続されます。
+  1. **マイニング プール**: ドロップダウンから接続先を選択します（デフォルト: `VIPPOOL (国内最大・要Web登録 - vippool.net)`）。
+  2. **ワーカー名とパスワードの設定**:
+     - **VIPPOOL (推奨・国内稼働代表プール) の場合**:
+       1. [VIPPOOL (https://vippool.net)](https://vippool.net) で無料アカウント登録を行います。
+       2. ログイン後、左メニューの「My Account」➡「My Workers」を開き、ワーカー（例: `worker1`）とパスワード（例: `x` または任意）を作成します。
+       3. 本アプリのワーカー名欄に **`登録アカウント名.worker1`**（※ピリオド区切り）、パスワード欄に設定したパスワードを入力します。
+     - **アドレス直接採掘プール (YIIEMP等) の場合**:
+       - 単に任意のワーカー名（例: `worker1`）を入力すれば、受取アドレスと自動連結されて接続されます。パスワードは `x` のままで構いません。
   3. **ワーカー パスワード**: プールで指定したパスワードを入力します（初期値: `x`）。
 * **タブ 2: 🏠 ソロマイニング (Monacoin Core RPC)**
   1. PC上で **Monacoin Core (公式フルノード)** を起動し、ブロックチェーンを同期させておきます。
@@ -187,7 +191,16 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v2.0.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)** (約 46.4 MB)
+
+| 対象OS | ファイル名 | 容量 | ダウンロードリンク (Direct Download) |
+|:---|:---|:---:|:---:|
+| 🪟 **Windows 64bit ポータブル版 (v2.0.0)** | `MonaMinerRTX_Portable_v2.0.0.zip` | 約 46.4 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)** |
+
+> [!TIP]
+> **ワンクリックで即座にダウンロードできます**:
+> 上記リンクをクリックすると、GitHubから直接 ZIP ファイルのダウンロードが開始されます。
+> 解凍後、フォルダ内の **`起動する.bat`** をダブルクリックするだけで、Pythonの事前インストールなしですぐにマイニングスタジオが起動します。
+
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
