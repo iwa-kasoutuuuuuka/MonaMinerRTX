@@ -78,14 +78,16 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX v1.3.0 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v1.4.0 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
         cpu_info = self.hw_mgr.cpu_info
 
-        if self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
-            sub_text = f"NVIDIA GPU ({hw_info['short_name']}) & 多コアCPU ハイブリッド | プール / ソロ両用"
+        if hw_info.get("is_amd", False):
+            sub_text = f"🔴 AMD Radeon ({hw_info['short_name']}) & 多コアCPU ハイブリッド | プール / ソロ両用"
+        elif self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
+            sub_text = f"⚡ NVIDIA GPU ({hw_info['short_name']}) & 多コアCPU ハイブリッド | プール / ソロ両用"
         else:
             sub_text = f"多コアCPU ({cpu_info['logical_cores']}T) マイニングスタジオ | プール / ソロ両用"
 
@@ -102,7 +104,9 @@ class MainWindow(QMainWindow):
         badge_layout.setSpacing(4)
         badge_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        if self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
+        if hw_info.get("is_amd", False):
+            lbl_hw = QLabel(f"🔴 {hw_info['name']} ({hw_info['arch_name']}) | 🧠 CPU ({cpu_info['logical_cores']}T)")
+        elif self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0:
             lbl_hw = QLabel(f"⚡ {hw_info['name']} ({hw_info['arch_name']}) | 🧠 CPU ({cpu_info['logical_cores']}T)")
         else:
             lbl_hw = QLabel(f"🧠 CPU 専用 ({cpu_info['logical_cores']} Threads)")
@@ -156,8 +160,9 @@ class MainWindow(QMainWindow):
         dev_layout.addWidget(lbl_dev_title)
 
         dev_btn_layout = QHBoxLayout()
-        has_gpu = self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0
-        gpu_label = f"⚡ GPU のみ ({hw_info['short_name']})" if has_gpu else "⚡ GPU (未検出)"
+        has_gpu = self.hw_mgr.has_gpu or (self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0)
+        gpu_badge = "🔴" if hw_info.get("is_amd", False) else "⚡"
+        gpu_label = f"{gpu_badge} GPU のみ ({hw_info['short_name']})" if has_gpu else "⚡ GPU (未検出)"
         self.btn_dev_gpu = QRadioButton(gpu_label)
         self.btn_dev_cpu = QRadioButton("🧠 CPU のみ")
         self.btn_dev_hybrid = QRadioButton("🚀 ハイブリッド (GPU+CPU)")
@@ -361,7 +366,7 @@ class MainWindow(QMainWindow):
         self.chk_simulator.toggled.connect(lambda v: self.config_mgr.set("use_simulator", v))
         cfg_layout.addWidget(self.chk_simulator, 1, 1)
 
-        btn_browse_miner = QPushButton("外部 ccminer.exe 指定...")
+        btn_browse_miner = QPushButton("外部マイナー指定 (ccminer / wildrig / sgminer 等)...")
         btn_browse_miner.setStyleSheet("background-color: #334155; border: none; border-radius: 4px; padding: 4px 10px;")
         btn_browse_miner.clicked.connect(self._browse_custom_miner)
         cfg_layout.addWidget(btn_browse_miner, 1, 2)
@@ -446,7 +451,7 @@ class MainWindow(QMainWindow):
 
     def _browse_custom_miner(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "ccminer.exe を選択", "", "Executable (*.exe);;All Files (*.*)"
+            self, "外部マイナー実行ファイルを選択 (ccminer / wildrig 等)", "", "Executable (*.exe);;All Files (*.*)"
         )
         if path:
             self.config_mgr.set("custom_miner_path", path)
@@ -485,9 +490,11 @@ class MainWindow(QMainWindow):
 
             # If user wants real mining but no binary set
             if not use_sim and (not custom_path or not os.path.exists(custom_path)):
+                is_amd = self.hw_mgr.device_info.get("is_amd", False)
+                miner_hint = "外部マイナー (wildrig / sgminer-gm / ccminer等)" if is_amd else "外部の ccminer.exe"
                 reply = QMessageBox.question(
-                    self, "ccminer未設定",
-                    "外部の ccminer.exe が指定されていません。\n"
+                    self, "外部マイナー未設定",
+                    f"{miner_hint} が指定されていません。\n"
                     "テスト・診断モード (Simulator) で動作検証を行いますか？",
                     QMessageBox.Yes | QMessageBox.No
                 )
@@ -496,6 +503,18 @@ class MainWindow(QMainWindow):
                     self.chk_simulator.setChecked(True)
                 else:
                     return
+            elif not use_sim and custom_path:
+                is_amd = self.hw_mgr.device_info.get("is_amd", False)
+                if is_amd and "ccminer" in os.path.basename(custom_path).lower():
+                    reply = QMessageBox.warning(
+                        self, "AMD GPU 互換性警告",
+                        "指定されたマイナーは 'ccminer' (NVIDIA CUDA専用) の可能性があります。\n"
+                        "AMD Radeon GPU で実マイニングを行う場合は、OpenCL 対応マイナー (wildrig-multi または sgminer-gm 等) を指定するか、テストモードをご利用ください。\n\n"
+                        "このまま実行を試みますか？",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.No:
+                        return
 
             mode = self.current_mode
             if mode == "auto":
@@ -525,7 +544,7 @@ class MainWindow(QMainWindow):
             self.card_power.set_value(f"{m.get('power_w', 0.0):.1f}")
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX v1.3.0 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v1.4.0 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")

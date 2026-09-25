@@ -2,15 +2,15 @@
 
 <img src="assets/icon.png" width="120" height="120" alt="MonaMiner RTX Logo">
 
-# MonaMiner RTX
+# MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v1.3.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.3.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.3.0.zip)
+[![Release](https://img.shields.io/badge/Release-v1.4.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.4.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.4.0.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**NVIDIA GeForce RTX 50シリーズ (Blackwell)、RTX 40 / 30 / 20シリーズ、GTX 16 / 10シリーズ、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
+**NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
 
 </div>
 
@@ -18,9 +18,9 @@
 
 ## 🌟 主な特徴
 
-1. **全世代NVIDIA GPU & CPUスペック自動検知エンジン**:
-   - `NVML (NVIDIA Management Library)` および CPUトポロジー検知により、GPU型番（RTX 5090/5080/4090/4070/3060/GTX 1660等）、アーキテクチャ（Blackwell / Ada / Ampere / Turing / Pascal）、VRAM、BIOS定格TDP許容範囲（Min〜Default〜Max W）、およびCPU物理/論理スレッド数をリアルタイム検出。
-   - 搭載GPUの世代と電力制約に基づき、最も電力効率（Hash/Watt）が高い動作設定を自動提案します。
+1. **全世代NVIDIA & AMD Radeon GPU & CPUスペック自動検知エンジン**:
+   - `NVML (NVIDIA Management Library)` および Windows WMI/CIM システム問い合わせにより、NVIDIA GeForce（RTX 5090〜GTX 1050Ti）および **AMD Radeon（RX 7900 XTX〜RX 470、Vegaシリーズ）** の型番、アーキテクチャ（Blackwell / Ada / Ampere / Turing / Pascal / RDNA 3 / RDNA 2 / RDNA 1 / Vega / Polaris）、VRAM、BIOS定格TDP、およびCPU物理/論理スレッド数をリアルタイム検出。
+   - 搭載GPUのベンダー（NVIDIA / AMD）とアーキテクチャ特性に応じた最適な動作プロファイルを自動提案します。
 
 2. **3つの最適化動作プロファイル (実機GPU & CPU 自動連動)**:
    - 🍃 **電力効率モード (Eco / Sweet Spot - 推奨)**:
@@ -151,7 +151,7 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v1.3.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.3.0.zip)** (約 45.8 MB)
+* **[🚀 MonaMinerRTX_Portable_v1.4.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.4.0.zip)** (約 46 MB)
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
@@ -183,6 +183,15 @@ python diagnose.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v1.4.0 (2026-09-25)
+* **🔴 AMD Radeon GPU (RX 7000 / 6000 / 5000 / Vega / Polaris) フルサポート**:
+  * NVML（NVIDIA専用）に加え、Windows WMI/CIM経由のフォールバックGPU検知エンジンを実装。
+  * AMD Radeon RX 7900 XTX / 7800 XT、RX 6800 XT、RX 5700 XT、Vega 64/56、RX 580/570 等の自動判別に対応。
+  * 各世代アーキテクチャ（RDNA 3 / RDNA 2 / RDNA 1 / Vega / Polaris）および実機定格TDPに基づき、OpenCL最適化プロファイル（Eco / Perf / Quiet）とLyra2REv2ベンチマーク推定値を自動算出。
+  * UIヘッダーおよび採掘デバイス選択にAMD専用レッドバッジ（`🔴 GPU のみ (RX 7900 XTX)` 等）を動的バインディング。
+  * AMD環境下でNVIDIA CUDA専用マイナー（ccminer）が選択された場合の安全な互換性警告とOpenCLマイナー（wildrig-multi / sgminer-gm等）案内ダイアログを追加。
+  * 内蔵シミュレータにAMD OpenCL演算プロファイルおよび初期化ハンドシェイクを統合。
 
 ### v1.3.0 (2026-09-25)
 * **🌟 全世代NVIDIA GPUへの動的対応 (Universal NVIDIA GPU Support)**:
@@ -254,7 +263,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v1.3.0.zip # 配布用ZIPアーカイブ
+│   └── MonaMinerRTX_Portable_v1.4.0.zip # 配布用ZIPアーカイブ
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/CPU ハードウェア検知 & 最適化推奨エンジン

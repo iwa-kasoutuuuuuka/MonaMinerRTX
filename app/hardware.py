@@ -51,6 +51,64 @@ GPU_BENCHMARKS = [
     ("1070", 35.0, 44.0, 18.0),
     ("1060", 22.0, 28.0, 11.0),
     ("1050 ti", 12.0, 15.0, 6.0),
+    # AMD Radeon Models (OpenCL / Lyra2REv2)
+    ("7900 xtx", 135.0, 175.0, 70.0),
+    ("7900 xt", 115.0, 150.0, 60.0),
+    ("7900 gre", 100.0, 130.0, 50.0),
+    ("7800 xt", 85.0, 110.0, 45.0),
+    ("7700 xt", 75.0, 95.0, 38.0),
+    ("7600 xt", 48.0, 62.0, 25.0),
+    ("7600", 42.0, 54.0, 22.0),
+    ("6950 xt", 95.0, 125.0, 50.0),
+    ("6900 xt", 90.0, 118.0, 47.0),
+    ("6800 xt", 85.0, 110.0, 44.0),
+    ("6800", 72.0, 92.0, 36.0),
+    ("6750 xt", 62.0, 80.0, 32.0),
+    ("6700 xt", 58.0, 75.0, 30.0),
+    ("6650 xt", 42.0, 54.0, 22.0),
+    ("6600 xt", 38.0, 48.0, 20.0),
+    ("6600", 32.0, 40.0, 16.0),
+    ("5700 xt", 42.0, 54.0, 22.0),
+    ("5700", 36.0, 46.0, 18.0),
+    ("5600 xt", 30.0, 38.0, 15.0),
+    ("radeon vii", 70.0, 90.0, 35.0),
+    ("vega 64", 38.0, 48.0, 20.0),
+    ("vega 56", 32.0, 40.0, 16.0),
+    ("rx 590", 24.0, 30.0, 12.0),
+    ("rx 580", 22.0, 28.0, 11.0),
+    ("rx 570", 18.0, 24.0, 9.0),
+    ("rx 480", 18.0, 24.0, 9.0),
+    ("rx 470", 15.0, 20.0, 8.0),
+]
+
+AMD_DEFAULT_TDP = [
+    ("7900 xtx", 355.0, 250.0),
+    ("7900 xt", 315.0, 220.0),
+    ("7900 gre", 260.0, 180.0),
+    ("7800 xt", 263.0, 180.0),
+    ("7700 xt", 245.0, 170.0),
+    ("7600 xt", 190.0, 130.0),
+    ("7600", 165.0, 115.0),
+    ("6950 xt", 335.0, 235.0),
+    ("6900 xt", 300.0, 210.0),
+    ("6800 xt", 300.0, 210.0),
+    ("6800", 250.0, 175.0),
+    ("6750 xt", 250.0, 175.0),
+    ("6700 xt", 230.0, 160.0),
+    ("6650 xt", 180.0, 125.0),
+    ("6600 xt", 160.0, 110.0),
+    ("6600", 132.0, 95.0),
+    ("5700 xt", 225.0, 155.0),
+    ("5700", 180.0, 125.0),
+    ("5600 xt", 150.0, 105.0),
+    ("radeon vii", 300.0, 210.0),
+    ("vega 64", 295.0, 200.0),
+    ("vega 56", 210.0, 145.0),
+    ("rx 590", 225.0, 150.0),
+    ("rx 580", 185.0, 130.0),
+    ("rx 570", 150.0, 105.0),
+    ("rx 480", 150.0, 105.0),
+    ("rx 470", 120.0, 85.0),
 ]
 
 def get_arch_name(major: int, minor: int) -> str:
@@ -73,6 +131,20 @@ def get_arch_name(major: int, minor: int) -> str:
     else:
         return "NVIDIA GPU"
 
+def get_amd_arch_name(name: str) -> str:
+    n = name.upper()
+    if any(k in n for k in ['7900', '7800', '7700', '7600']):
+        return "RDNA 3"
+    elif any(k in n for k in ['6950', '6900', '6800', '6750', '6700', '6650', '6600', '6500', '6400']):
+        return "RDNA 2"
+    elif any(k in n for k in ['5700', '5600', '5500', '5300']):
+        return "RDNA 1"
+    elif 'VEGA' in n or 'RADEON VII' in n:
+        return "GCN 5th (Vega)"
+    elif any(k in n for k in ['590', '580', '570', '560', '550', '480', '470', '460']):
+        return "GCN 4th (Polaris)"
+    return "AMD Radeon (OpenCL)"
+
 def is_admin() -> bool:
     """Check if the current process is running with Windows Administrator privileges."""
     try:
@@ -84,12 +156,14 @@ class HardwareManager:
     def __init__(self):
         self.initialized = False
         self.has_nvml = False
+        self.has_gpu = False
         self.device_handle = None
         self.device_count = 0
         self.device_info = {
+            "vendor": "UNKNOWN", # "NVIDIA", "AMD", "INTEL", "NONE"
             "name": "N/A",
             "short_name": "GPU",
-            "arch_name": "NVIDIA GPU",
+            "arch_name": "GPU",
             "vram_gb": 0.0,
             "vram_free_gb": 0.0,
             "driver_version": "N/A",
@@ -100,7 +174,9 @@ class HardwareManager:
             "pwr_max_w": 0.0,
             "is_laptop": False,
             "is_rtx5080": False,
-            "is_blackwell": False
+            "is_blackwell": False,
+            "is_amd": False,
+            "is_nvidia": False,
         }
         self.cpu_info = {
             "name": platform.processor() or "AMD / Intel CPU",
@@ -111,19 +187,80 @@ class HardwareManager:
         self.init_nvml()
 
     def init_nvml(self):
-        if not HAS_PYNVML:
+        if HAS_PYNVML:
+            try:
+                pynvml.nvmlInit()
+                self.has_nvml = True
+                self.device_count = pynvml.nvmlDeviceGetCount()
+                if self.device_count > 0:
+                    self.has_gpu = True
+                    self.device_info["vendor"] = "NVIDIA"
+                    self.device_info["is_nvidia"] = True
+                    self.device_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    self._inspect_device()
+                    self.initialized = True
+                    return
+            except Exception as e:
+                print(f"[Hardware] NVML init failed: {e}")
+                self.has_nvml = False
+
+        # Fallback for AMD Radeon or systems without NVML
+        self._inspect_fallback_gpus()
+        self.initialized = True
+
+    def _inspect_fallback_gpus(self):
+        """Detects AMD Radeon or generic display adapters via Windows CIM/WMI."""
+        if sys.platform != "win32":
             return
         try:
-            pynvml.nvmlInit()
-            self.has_nvml = True
-            self.device_count = pynvml.nvmlDeviceGetCount()
-            if self.device_count > 0:
-                self.device_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                self._inspect_device()
-            self.initialized = True
+            import subprocess
+            import json
+            cmd = ['powershell', '-NoProfile', '-Command',
+                   'Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion | ConvertTo-Json']
+            out = subprocess.check_output(cmd, text=True, timeout=6)
+            adapters = json.loads(out)
+            if isinstance(adapters, dict):
+                adapters = [adapters]
+
+            for a in adapters:
+                name = a.get("Name", "")
+                name_upper = name.upper()
+                if "RADEON" in name_upper or "AMD" in name_upper or "ADVANCED MICRO DEVICES" in name_upper:
+                    self.has_gpu = True
+                    self.device_count = 1
+                    self.device_info["vendor"] = "AMD"
+                    self.device_info["is_amd"] = True
+                    self.device_info["name"] = name
+                    self.device_info["driver_version"] = str(a.get("DriverVersion", "N/A"))
+                    ram_bytes = a.get("AdapterRAM", 0) or 0
+                    self.device_info["vram_gb"] = round(ram_bytes / (1024 ** 3), 1) if ram_bytes > 0 else 8.0
+                    self.device_info["arch_name"] = get_amd_arch_name(name)
+
+                    # Short name
+                    short = name.replace("AMD ", "").replace("Radeon ", "").strip()
+                    self.device_info["short_name"] = short or "Radeon GPU"
+
+                    # Estimate TDP constraints
+                    name_lower = name.lower()
+                    match_tdp = None
+                    for kw, def_w, min_w in AMD_DEFAULT_TDP:
+                        if kw in name_lower:
+                            match_tdp = (def_w, min_w)
+                            break
+                    if match_tdp:
+                        self.device_info["pwr_default_w"] = match_tdp[0]
+                        self.device_info["pwr_min_w"] = match_tdp[1]
+                        self.device_info["pwr_max_w"] = match_tdp[0]
+                    else:
+                        self.device_info["pwr_default_w"] = 220.0
+                        self.device_info["pwr_min_w"] = 150.0
+                        self.device_info["pwr_max_w"] = 250.0
+
+                    if "laptop" in name_lower or "mobile" in name_lower:
+                        self.device_info["is_laptop"] = True
+                    break
         except Exception as e:
-            print(f"[Hardware] NVML init failed: {e}")
-            self.has_nvml = False
+            print(f"[Hardware] Fallback AMD inspection: {e}")
 
     def _inspect_device(self):
         h = self.device_handle
@@ -250,11 +387,15 @@ class HardwareManager:
         Analyzes the detected hardware (any NVIDIA GPU + CPU) and returns optimized profiles.
         """
         info = self.device_info
-        has_gpu = self.has_nvml and self.device_count > 0
+        has_gpu = self.has_gpu or (self.has_nvml and self.device_count > 0)
         name = info["name"]
         short_name = info["short_name"]
+        is_amd = info.get("is_amd", False)
         compute_cap = info.get("compute_capability", (0, 0))
-        arch_name = get_arch_name(compute_cap[0], compute_cap[1])
+        if is_amd:
+            arch_name = info.get("arch_name", "AMD Radeon")
+        else:
+            arch_name = get_arch_name(compute_cap[0], compute_cap[1])
         is_laptop = info.get("is_laptop", False)
 
         pwr_def = info["pwr_default_w"]
@@ -272,12 +413,18 @@ class HardwareManager:
         if match:
             eco_gpu_hr, perf_gpu_hr, quiet_gpu_hr = match
         elif has_gpu:
-            major, minor = compute_cap
-            eff = 0.58 if major >= 12 else (0.45 if major >= 8 and minor >= 9 else (0.30 if major >= 8 else 0.22))
-            base_pwr = pwr_def if pwr_def > 0 else 180.0
-            perf_gpu_hr = round(base_pwr * eff, 1)
-            eco_gpu_hr = round(perf_gpu_hr * 0.78, 1)
-            quiet_gpu_hr = round(perf_gpu_hr * 0.40, 1)
+            if is_amd:
+                base_pwr = pwr_def if pwr_def > 0 else 200.0
+                perf_gpu_hr = round(base_pwr * 0.35, 1)
+                eco_gpu_hr = round(perf_gpu_hr * 0.78, 1)
+                quiet_gpu_hr = round(perf_gpu_hr * 0.40, 1)
+            else:
+                major, minor = compute_cap
+                eff = 0.58 if major >= 12 else (0.45 if major >= 8 and minor >= 9 else (0.30 if major >= 8 else 0.22))
+                base_pwr = pwr_def if pwr_def > 0 else 180.0
+                perf_gpu_hr = round(base_pwr * eff, 1)
+                eco_gpu_hr = round(perf_gpu_hr * 0.78, 1)
+                quiet_gpu_hr = round(perf_gpu_hr * 0.40, 1)
         else:
             eco_gpu_hr, perf_gpu_hr, quiet_gpu_hr = 0.0, 0.0, 0.0
 
@@ -300,9 +447,14 @@ class HardwareManager:
 
         # Intensity
         major = compute_cap[0]
-        intensity_eco = 21 if major >= 8 else 20
-        intensity_perf = 24 if major >= 8 else 22
-        intensity_quiet = 16 if major >= 8 else 15
+        if is_amd:
+            intensity_eco = 20
+            intensity_perf = 23
+            intensity_quiet = 15
+        else:
+            intensity_eco = 21 if major >= 8 else 20
+            intensity_perf = 24 if major >= 8 else 22
+            intensity_quiet = 16 if major >= 8 else 15
 
         # CPU threads & hashrate
         cpu_phys = self.cpu_info["physical_cores"]
@@ -359,6 +511,14 @@ class HardwareManager:
                 f"・排熱・バッテリー・静音性を考慮し、「☕ ながらマイニング（低負荷）」を自動推奨します。\n"
                 f"・GPU: 低負荷スレッド (Intensity {intensity_quiet}) / CPU: {cpu_threads_quiet}スレッドで熱を抑制。"
             )
+        elif is_amd:
+            recommended_mode = "eco"
+            rationale = (
+                f"【AMD Radeon ({short_name} - {arch_name}) & {cpu_log}スレッドCPU 最適化検知】\n"
+                f"・GPU: OpenCL 最適化プロファイル ({pwr_eco:.0f}W / 推定定格 {pwr_def:.0f}W) を適用。\n"
+                f"・CPU: 物理{cpu_phys}コアに絞ることでキャッシュ競合を防ぎ、最高効率を発揮します。\n"
+                f"⇒ 最も電気代対効果が高い「🍃 電力効率モード (GPU {pwr_eco:.0f}W + CPU {cpu_threads_eco}T)」を自動推奨します。"
+            )
         elif has_gpu:
             recommended_mode = "eco"
             rationale = (
@@ -371,7 +531,7 @@ class HardwareManager:
             recommended_mode = "eco"
             rationale = (
                 f"【CPUマイニング最適化検知】\n"
-                f"・NVIDIA GPU未検出のため、多コアCPU ({cpu_log}スレッド) に特化した最適化プロファイルを提案します。\n"
+                f"・GPU未検出のため、多コアCPU ({cpu_log}スレッド) に特化した最適化プロファイルを提案します。\n"
                 f"・物理{cpu_phys}コアを専有することで、日常動作を阻害せず安定したマイニングが可能です。"
             )
 
@@ -386,6 +546,8 @@ class HardwareManager:
         Applies power limit if running with administrator privileges.
         """
         if not self.has_nvml or not self.device_handle:
+            if self.device_info.get("is_amd", False):
+                return False, "AMD Radeon環境: 電力制限制御はAMD Software (Adrenalin) またはIntensity強度で調整してください。"
             return False, "NVMLが利用できません"
         if not self.is_admin:
             return False, "管理者権限が必要です。Intensity（スレッド強度）のみで負荷制御します。"

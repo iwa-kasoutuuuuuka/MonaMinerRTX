@@ -38,10 +38,13 @@ class SimulatorWorker(QThread):
         self.blocks_found = 0
 
     def run(self):
+        hw_info = self.hardware_mgr.device_info
+        is_amd = hw_info.get("is_amd", False)
+        gpu_label = f"AMD {hw_info['short_name']}" if is_amd else f"NVIDIA {hw_info['short_name']}"
         dev_desc = {
-            "gpu": "GPU (RTX 5080)",
+            "gpu": f"GPU ({gpu_label})",
             "cpu": f"CPU ({self.cpu_threads} Threads)",
-            "hybrid": f"ハイブリッド (RTX 5080 + CPU {self.cpu_threads} Threads)"
+            "hybrid": f"ハイブリッド ({gpu_label} + CPU {self.cpu_threads} Threads)"
         }.get(self.device_target, "GPU")
 
         self.log_message.emit(f"★ 採掘エンジン起動: Lyra2REv2 (MonaCoin)", "info")
@@ -64,18 +67,26 @@ class SimulatorWorker(QThread):
             self.log_message.emit(f"Stratum pool: 難易度(Diff) 0.052 が設定されました", "info")
 
         # Hardware Initialization
-        hw_info = self.hardware_mgr.device_info
         recs = self.hardware_mgr.get_mode_recommendation()
         mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
 
         if self.device_target in ["gpu", "hybrid"]:
-            self.log_message.emit(
-                f"{hw_info['name']} ({hw_info['arch_name']}) 検出・初期化完了", "success"
-            )
-            self.log_message.emit(
-                f"⚡ GPU Power: {mode_data['target_pwr_w']:.0f}W / Intensity: {mode_data['intensity']} を適用",
-                "info" if self.mode != "perf" else "warn"
-            )
+            if is_amd:
+                self.log_message.emit(
+                    f"🔴 {hw_info['name']} ({hw_info['arch_name']}) OpenCL 初期化完了", "success"
+                )
+                self.log_message.emit(
+                    f"⚙️ OpenCL Compute Profile: 推定 {mode_data['target_pwr_w']:.0f}W / WorkSize 最適化を適用",
+                    "info"
+                )
+            else:
+                self.log_message.emit(
+                    f"⚡ {hw_info['name']} ({hw_info['arch_name']}) 検出・CUDA初期化完了", "success"
+                )
+                self.log_message.emit(
+                    f"⚡ GPU Power: {mode_data['target_pwr_w']:.0f}W / Intensity: {mode_data['intensity']} を適用",
+                    "info" if self.mode != "perf" else "warn"
+                )
 
         if self.device_target in ["cpu", "hybrid"]:
             self.log_message.emit(f"CPU マイニングワーカー初期化: {self.cpu_threads} スレッド稼働 (AVX-512 / AVX2 最適化)", "success")
