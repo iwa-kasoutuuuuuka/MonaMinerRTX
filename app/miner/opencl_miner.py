@@ -84,10 +84,11 @@ class OpenCLMinerWorker(QThread):
             for idx, d in enumerate(target_devs):
                 self.log_message.emit(f"GPU #{d['global_index']} 初期化: {d['name']} ({d['platform_name']})", "info")
                 ctx = OpenCLContext(d["platform_id"], d["id"])
-                ctx.build_program(kernel_src, options="-cl-mad-enable -cl-no-signed-zeros")
+                ctx.build_program(kernel_src, options="-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math")
                 kernel = ctx.get_kernel("search_lyra2v2")
 
-                local_wg = min(256, d.get("max_work_group_size", 256))
+                # Work-group size: 128 offers superior occupancy across NVIDIA Blackwell/Ada & AMD RDNA
+                local_wg = min(128, d.get("max_work_group_size", 128))
                 init_batch = max(local_wg * 16, 1 << min(20, max(16, intensity)))
 
                 buf_header = ctx.create_buffer(19 * 4)
@@ -155,7 +156,7 @@ class OpenCLMinerWorker(QThread):
         recs = self.hardware_mgr.get_mode_recommendation()
         mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
         intensity = mode_data.get("intensity", 20)
-        local_wg = min(256, d.get("max_work_group_size", 256))
+        local_wg = min(128, d.get("max_work_group_size", 128))
         # Initial batch size (65K to 1M)
         batch_size = max(local_wg * 16, 1 << min(20, max(16, intensity)))
 

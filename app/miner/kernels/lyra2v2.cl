@@ -54,10 +54,14 @@ __constant uint32_t BLAKE_C[16] = {
 
 inline void blake256_compress(uint32_t state[8], const uint32_t m[16]) {
     uint32_t v[16];
+    #pragma unroll
     for (int i = 0; i < 8; i++) v[i] = state[i];
+    #pragma unroll
     for (int i = 0; i < 4; i++) v[i + 8] = BLAKE_C[i];
+    #pragma unroll
     for (int i = 4; i < 8; i++) v[i + 8] = BLAKE_C[i] ^ 0; // counter = 0
 
+    #pragma unroll
     for (int r = 0; r < 14; r++) {
         __constant uint8_t *s = BLAKE_SIGMA[r];
         G(v, 0, 4, 8, 12, m[s[0]] ^ BLAKE_C[s[1]], m[s[2]] ^ BLAKE_C[s[3]]);
@@ -69,6 +73,7 @@ inline void blake256_compress(uint32_t state[8], const uint32_t m[16]) {
         G(v, 2, 7, 8, 13, m[s[9]] ^ BLAKE_C[s[8]], m[s[11]] ^ BLAKE_C[s[10]]);
         G(v, 3, 4, 9, 14, m[s[13]] ^ BLAKE_C[s[12]], m[s[15]] ^ BLAKE_C[s[14]]);
     }
+    #pragma unroll
     for (int i = 0; i < 8; i++) {
         state[i] = state[i] ^ v[i] ^ v[i + 8];
     }
@@ -88,18 +93,23 @@ inline void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
     // Standard Keccak-f[1600] 24 rounds permutation
     // For 32-byte input to 32-byte output
     ulong state[25] = {0};
+    #pragma unroll
     for (int i = 0; i < 4; i++) {
         state[i] = ((ulong)in[i*2+1] << 32) | in[i*2];
     }
     state[4] = 0x01; // padding
     state[16] ^= 0x8000000000000000UL;
 
+    #pragma unroll
     for (int round = 0; round < 24; round++) {
         ulong C[5], D[5];
+        #pragma unroll
         for (int i = 0; i < 5; i++)
             C[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20];
+        #pragma unroll
         for (int i = 0; i < 5; i++)
             D[i] = C[(i + 4) % 5] ^ rotate(C[(i + 1) % 5], 1UL);
+        #pragma unroll
         for (int i = 0; i < 25; i++)
             state[i] ^= D[i % 5];
 
@@ -132,7 +142,9 @@ inline void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
         B[13] = rotate(state[24], 14UL);
 
         // Chi
+        #pragma unroll
         for (int j = 0; j < 25; j += 5) {
+            #pragma unroll
             for (int i = 0; i < 5; i++) {
                 state[j + i] = B[j + i] ^ ((~B[j + (i + 1) % 5]) & B[j + (i + 2) % 5]);
             }
@@ -140,6 +152,7 @@ inline void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
         state[0] ^= KECCAK_RC[round];
     }
 
+    #pragma unroll
     for (int i = 0; i < 4; i++) {
         out[i*2] = (uint32_t)(state[i]);
         out[i*2+1] = (uint32_t)(state[i] >> 32);
@@ -149,24 +162,32 @@ inline void keccak256_hash(const uint32_t in[8], uint32_t out[8]) {
 // --- CUBEHASH 256 ---
 inline void cubehash256_hash(const uint32_t in[8], uint32_t out[8]) {
     uint32_t s[32];
+    #pragma unroll
     for (int i = 0; i < 32; i++) s[i] = 0;
     s[0] = 16; // 16 rounds
     s[1] = 32; // 32 bytes block
     s[2] = 256; // 256 bit digest
 
     // Input block
+    #pragma unroll
     for (int i = 0; i < 8; i++) {
         s[i] ^= in[i];
     }
     // CubeHash round transformation
+    #pragma unroll
     for (int r = 0; r < 16; r++) {
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i + 16] += s[i];
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i] = ROTL32(s[i], 7);
+        #pragma unroll
         for (int i = 0; i < 8; i++) {
             uint32_t t = s[i]; s[i] = s[i + 8]; s[i + 8] = t;
             t = s[i + 16]; s[i + 16] = s[i + 24]; s[i + 24] = t;
         }
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i] ^= s[i + 16];
+        #pragma unroll
         for (int i = 0; i < 8; i++) {
             uint32_t t = s[i + 8]; s[i + 8] = s[i]; s[i] = t;
             t = s[i + 24]; s[i + 24] = s[i + 16]; s[i + 16] = t;
@@ -174,24 +195,32 @@ inline void cubehash256_hash(const uint32_t in[8], uint32_t out[8]) {
     }
     // Finalization
     s[31] ^= 1;
+    #pragma unroll
     for (int r = 0; r < 32; r++) {
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i + 16] += s[i];
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i] = ROTL32(s[i], 7);
+        #pragma unroll
         for (int i = 0; i < 8; i++) {
             uint32_t t = s[i]; s[i] = s[i + 8]; s[i + 8] = t;
             t = s[i + 16]; s[i + 16] = s[i + 24]; s[i + 24] = t;
         }
+        #pragma unroll
         for (int i = 0; i < 16; i++) s[i] ^= s[i + 16];
+        #pragma unroll
         for (int i = 0; i < 8; i++) {
             uint32_t t = s[i + 8]; s[i + 8] = s[i]; s[i] = t;
             t = s[i + 24]; s[i + 24] = s[i + 16]; s[i + 16] = t;
         }
     }
+    #pragma unroll
     for (int i = 0; i < 8; i++) out[i] = s[i];
 }
 
 // --- LYRA2 (nRows = 2, nCols = 330) ---
 inline void lyra2_sponge(ulong state[16]) {
+    #pragma unroll
     for (int round = 0; round < 12; round++) {
         // Reduced round sponge
         state[0] ^= state[1]; state[2] ^= state[3];
@@ -202,6 +231,7 @@ inline void lyra2_sponge(ulong state[16]) {
 
 inline void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
     ulong state[16] = {0};
+    #pragma unroll
     for (int i = 0; i < 4; i++) {
         state[i] = ((ulong)in[i*2+1] << 32) | in[i*2];
     }
@@ -214,6 +244,7 @@ inline void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
 
     lyra2_sponge(state);
 
+    #pragma unroll
     for (int i = 0; i < 4; i++) {
         out[i*2] = (uint32_t)(state[i]);
         out[i*2+1] = (uint32_t)(state[i] >> 32);
@@ -224,15 +255,19 @@ inline void lyra2v2_core(const uint32_t in[8], uint32_t out[8]) {
 inline void skein256_hash(const uint32_t in[8], uint32_t out[8]) {
     ulong s[4] = {0x499422ab41d4b840UL, 0xaddb89ec5a9c9453UL, 0x9e548683815046e3UL, 0x39c1a54ff93fb1bdUL};
     ulong m[4];
+    #pragma unroll
     for (int i = 0; i < 4; i++) m[i] = ((ulong)in[i*2+1] << 32) | in[i*2];
 
+    #pragma unroll
     for (int i = 0; i < 4; i++) s[i] ^= m[i];
+    #pragma unroll
     for (int round = 0; round < 8; round++) {
         s[0] += s[1]; s[1] = rotate(s[1], 14UL) ^ s[0];
         s[2] += s[3]; s[3] = rotate(s[3], 16UL) ^ s[2];
         s[0] += s[3]; s[3] = rotate(s[3], 52UL) ^ s[0];
         s[2] += s[1]; s[1] = rotate(s[1], 57UL) ^ s[2];
     }
+    #pragma unroll
     for (int i = 0; i < 4; i++) {
         out[i*2] = (uint32_t)(s[i]);
         out[i*2+1] = (uint32_t)(s[i] >> 32);
@@ -242,13 +277,17 @@ inline void skein256_hash(const uint32_t in[8], uint32_t out[8]) {
 // --- BMW 256 (Blue Midnight Wish) ---
 inline void bmw256_hash(const uint32_t in[8], uint32_t out[8]) {
     uint32_t s[16];
+    #pragma unroll
     for (int i = 0; i < 8; i++) s[i] = in[i];
+    #pragma unroll
     for (int i = 8; i < 16; i++) s[i] = 0x5a827999;
 
+    #pragma unroll
     for (int i = 0; i < 8; i++) {
         uint32_t t = s[i] + s[(i + 3) % 16];
         s[i] = ROTR32(t, 5) ^ s[(i + 7) % 16];
     }
+    #pragma unroll
     for (int i = 0; i < 8; i++) out[i] = s[i] ^ in[i];
 }
 
@@ -266,8 +305,9 @@ __kernel void search_lyra2v2(
     uint32_t gid = get_global_id(0);
     uint32_t nonce = base_nonce + gid;
 
-    // Construct 80-byte header in local memory (20 uint32 words)
+    // Construct 80-byte header in registers / local memory (20 uint32 words)
     uint32_t header[20];
+    #pragma unroll
     for (int i = 0; i < 19; i++) {
         header[i] = header_prefix[i];
     }
@@ -278,6 +318,7 @@ __kernel void search_lyra2v2(
     uint32_t stateB[8];
 
     // 1. Blake 256 on 80-byte header -> Output into stateA
+    #pragma unroll
     for (int i = 0; i < 8; i++) stateA[i] = BLAKE_IV[i];
     blake256_compress(stateA, header);
 
