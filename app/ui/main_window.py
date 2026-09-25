@@ -487,10 +487,10 @@ class MainWindow(QMainWindow):
 
     def _update_hardware_telemetry(self):
         m = self.hw_mgr.get_live_metrics()
-        self.card_gpu_temp.set_value(f"{m['temp_c']}")
-        self.card_cpu_util.set_value(f"{m['cpu_util_pct']}")
+        self.card_gpu_temp.set_value(f"{m.get('temp_c', 0)}")
+        self.card_cpu_util.set_value(f"{m.get('cpu_util_pct', 0)}")
         if not self.miner_ctrl.is_mining:
-            self.card_power.set_value(f"{m['power_w']:.1f}")
+            self.card_power.set_value(f"{m.get('power_w', 0.0):.1f}")
 
     def _on_miner_status_changed(self, status: str):
         self.setWindowTitle(f"MonaMiner RTX - [{status}]")

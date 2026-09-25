@@ -106,7 +106,13 @@ class HardwareManager:
             self.device_info["is_laptop"] = True
 
     def get_live_metrics(self) -> dict:
-        """Returns instantaneous GPU telemetry."""
+        """Returns instantaneous GPU and CPU telemetry."""
+        cpu_pct = 0
+        try:
+            cpu_pct = int(psutil.cpu_percent(interval=None))
+        except Exception:
+            cpu_pct = 0
+
         if not self.has_nvml or not self.device_handle:
             return {
                 "temp_c": 0,
@@ -117,7 +123,8 @@ class HardwareManager:
                 "clock_sm_mhz": 0,
                 "clock_mem_mhz": 0,
                 "vram_used_gb": 0.0,
-                "vram_total_gb": 0.0
+                "vram_total_gb": 0.0,
+                "cpu_util_pct": cpu_pct
             }
 
         h = self.device_handle
