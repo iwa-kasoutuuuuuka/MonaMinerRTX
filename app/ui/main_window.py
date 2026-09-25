@@ -317,17 +317,24 @@ class MainWindow(QMainWindow):
         self.combo_pool.currentIndexChanged.connect(self._on_pool_changed)
         tab_pool_layout.addWidget(self.combo_pool, 0, 1)
 
-        tab_pool_layout.addWidget(QLabel("ワーカー名:"), 0, 2)
+        tab_pool_layout.addWidget(QLabel("カスタム URL:"), 0, 2)
+        self.edit_custom_pool = QLineEdit(self.config_mgr.get("custom_pool_url", ""))
+        self.edit_custom_pool.setPlaceholderText("stratum+tcp://host:port (カスタム時)")
+        self.edit_custom_pool.textChanged.connect(lambda t: self.config_mgr.set("custom_pool_url", t.strip()))
+        self.edit_custom_pool.setEnabled(self.combo_pool.currentIndex() == 2)
+        tab_pool_layout.addWidget(self.edit_custom_pool, 0, 3)
+
+        tab_pool_layout.addWidget(QLabel("ワーカー名:"), 1, 0)
         self.edit_worker = QLineEdit(self.config_mgr.get("worker_name", "rtx5080_worker"))
         self.edit_worker.setPlaceholderText("例: アカウント名.worker1 (VIPPOOL登録名)")
         self.edit_worker.setToolTip("VIPPOOL等の登録制プールでは「Web登録ユーザー名.ワーカー名」を入力してください。")
         self.edit_worker.textChanged.connect(lambda t: self.config_mgr.set("worker_name", t.strip()))
-        tab_pool_layout.addWidget(self.edit_worker, 0, 3)
+        tab_pool_layout.addWidget(self.edit_worker, 1, 1)
 
-        tab_pool_layout.addWidget(QLabel("ワーカー パスワード:"), 1, 0)
+        tab_pool_layout.addWidget(QLabel("ワーカー パスワード:"), 1, 2)
         self.edit_pool_pass = QLineEdit(self.config_mgr.get("pool_password", "x"))
         self.edit_pool_pass.textChanged.connect(lambda t: self.config_mgr.set("pool_password", t.strip()))
-        tab_pool_layout.addWidget(self.edit_pool_pass, 1, 1)
+        tab_pool_layout.addWidget(self.edit_pool_pass, 1, 3)
 
         lbl_pool_hint = QLabel("💡 ヒント: VIPPOOL等の登録制プールは『アカウント名.ワーカー名』を入力してください。アドレス直掘りプールはワーカー名単体でOKです。")
         lbl_pool_hint.setStyleSheet("color: #a5b4fc; font-size: 11px;")
@@ -612,6 +619,8 @@ class MainWindow(QMainWindow):
 
     def _on_pool_changed(self, index: int):
         self.config_mgr.set("pool_index", index)
+        if hasattr(self, "edit_custom_pool"):
+            self.edit_custom_pool.setEnabled(index == 2)
 
     def _validate_address_input(self, text: str):
         self.config_mgr.set("wallet_address", text.strip())
@@ -884,7 +893,14 @@ class MainWindow(QMainWindow):
 
             target_type = self.target_type
             dev = self.device_target
-            pool_url = self.combo_pool.currentData()
+            if self.combo_pool.currentIndex() == 2:
+                custom_url = self.edit_custom_pool.text().strip()
+                if not custom_url:
+                    QMessageBox.warning(self, "入力エラー", "カスタムプールのURL (stratum+tcp://host:port) を入力してください。")
+                    return
+                pool_url = custom_url
+            else:
+                pool_url = self.combo_pool.currentData() or "stratum+tcp://stratum1.vippool.net:8888"
             worker = self.edit_worker.text().strip() or "worker1"
             pool_pass = self.edit_pool_pass.text().strip() or "x"
             solo_host = self.edit_solo_host.text().strip() or "127.0.0.1"

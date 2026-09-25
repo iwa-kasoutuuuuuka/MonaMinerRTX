@@ -118,13 +118,17 @@ class OpenCLMinerWorker(QThread):
 
         # 3. Setup Stratum Client
         if self.target_type != "solo":
-            clean_url = self.pool_url.replace("stratum+tcp://", "").replace("tcp://", "")
+            clean_url = (self.pool_url or "").replace("stratum+tcp://", "").replace("tcp://", "").strip()
             if ":" in clean_url:
                 host, port_str = clean_url.split(":", 1)
-                port = int(port_str)
+                port = int(port_str) if port_str.isdigit() else 8888
             else:
                 host = clean_url
                 port = 8888
+
+            if not host.strip():
+                host = "stratum1.vippool.net"
+                self.log_message.emit("⚠ プールホスト名が空のため、デフォルト (stratum1.vippool.net:8888) を使用します。", "warn")
 
             if "." in self.worker_name:
                 full_user = self.worker_name
