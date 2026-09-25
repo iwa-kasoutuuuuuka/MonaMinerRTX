@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QFrame,
     QFileDialog, QMessageBox, QTabWidget, QRadioButton, QButtonGroup,
-    QSpinBox, QSlider, QStackedWidget
+    QSpinBox, QSlider, QStackedWidget, QScrollArea, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -17,7 +17,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MonaMiner RTX - モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
-        self.resize(1050, 840)
+        self.setMinimumSize(880, 600)
+        self.resize(1060, 840)
         self.setStyleSheet(MAIN_STYLE)
 
         self.config_mgr = ConfigManager()
@@ -41,58 +42,71 @@ class MainWindow(QMainWindow):
         self._update_hardware_telemetry()
 
     def _setup_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(18, 12, 18, 12)
-        main_layout.setSpacing(10)
+        # 0. Main Scroll Area for small resolutions & high DPI
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setCentralWidget(scroll_area)
+
+        content_widget = QWidget()
+        content_widget.setObjectName("content_widget")
+        main_layout = QVBoxLayout(content_widget)
+        main_layout.setContentsMargins(14, 10, 14, 10)
+        main_layout.setSpacing(8)
+        scroll_area.setWidget(content_widget)
 
         # 1. Top Header Banner
         banner = QFrame()
         banner.setObjectName("banner")
         banner_layout = QHBoxLayout(banner)
-        banner_layout.setContentsMargins(12, 8, 12, 8)
+        banner_layout.setContentsMargins(10, 8, 10, 8)
+        banner_layout.setSpacing(8)
 
         # Icon & Title Header
         header_left = QHBoxLayout()
-        header_left.setSpacing(12)
+        header_left.setSpacing(10)
 
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "icon.png")
         if os.path.exists(icon_path):
             from PySide6.QtGui import QPixmap
             lbl_logo = QLabel()
-            pix = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pix = QPixmap(icon_path).scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             lbl_logo.setPixmap(pix)
             header_left.addWidget(lbl_logo)
 
         title_layout = QVBoxLayout()
+        title_layout.setSpacing(2)
         title = QLabel("MonaMiner RTX (Lyra2REv2)")
         title.setObjectName("title")
-        subtitle = QLabel("RTX 5080 (Blackwell) & CPU ハイブリッド対応 | プール / ソロマイニング両用")
+        subtitle = QLabel("RTX 5080 (Blackwell) & 多コアCPU ハイブリッド | プール / ソロ両用")
         subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
         title_layout.addWidget(title)
         title_layout.addWidget(subtitle)
         header_left.addLayout(title_layout)
-        banner_layout.addLayout(header_left)
-
-        banner_layout.addStretch()
+        banner_layout.addLayout(header_left, stretch=1)
 
         # Hardware Badge & Admin Status
         hw_info = self.hw_mgr.device_info
         cpu_info = self.hw_mgr.cpu_info
         badge_layout = QVBoxLayout()
-        badge_layout.setAlignment(Qt.AlignRight)
+        badge_layout.setSpacing(4)
+        badge_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        lbl_hw = QLabel(f"⚡ {hw_info['name']} (16GB GDDR7) | 🧠 CPU ({cpu_info['logical_cores']} Threads)")
+        lbl_hw = QLabel(f"⚡ {hw_info['name']} | 🧠 CPU ({cpu_info['logical_cores']}T)")
         lbl_hw.setObjectName("badge_rtx")
+        lbl_hw.setWordWrap(True)
         badge_layout.addWidget(lbl_hw)
 
         if self.hw_mgr.is_admin:
-            lbl_admin = QLabel("🔒 管理者権限: 有効 (NVML PowerLimit直接制御可能)")
+            lbl_admin = QLabel("🔒 管理者権限: 有効 (NVML PowerLimit直接制御)")
             lbl_admin.setObjectName("badge_admin_ok")
         else:
-            lbl_admin = QLabel("ℹ️ 一般ユーザー権限 (Intensity強度制御モード)")
+            lbl_admin = QLabel("ℹ️ 一般権限 (Intensity強度制御)")
             lbl_admin.setObjectName("badge_admin_no")
+        lbl_admin.setWordWrap(True)
         badge_layout.addWidget(lbl_admin)
 
         banner_layout.addLayout(badge_layout)

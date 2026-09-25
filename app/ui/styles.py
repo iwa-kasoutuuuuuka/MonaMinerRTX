@@ -2,22 +2,71 @@ MAIN_STYLE = """
 QMainWindow, QWidget {
     background-color: #11141a;
     color: #f3f4f6;
-    font-family: 'Segoe UI', 'Meiryo', sans-serif;
+    font-family: 'Yu Gothic UI', 'Segoe UI', 'Meiryo', sans-serif;
     font-size: 13px;
+}
+
+QScrollArea {
+    background-color: #11141a;
+    border: none;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: #0f172a;
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical {
+    background: #334155;
+    min-height: 24px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #475569;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: #0f172a;
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #334155;
+    min-width: 24px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #475569;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
 }
 
 QFrame#card {
     background-color: #1a202c;
     border: 1px solid #2d3748;
     border-radius: 10px;
-    padding: 12px;
+    padding: 10px;
 }
 
 QFrame#banner {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1a202c, stop:1 #2d3748);
     border: 1px solid #4a5568;
     border-radius: 12px;
-    padding: 14px;
+    padding: 10px 14px;
 }
 
 QLabel#title {

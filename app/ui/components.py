@@ -9,17 +9,21 @@ class MetricCard(QFrame):
         super().__init__()
         self.setObjectName("card")
         self.unit = unit
+        self.setMinimumHeight(64)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(2)
 
         self.lbl_title = QLabel(label)
         self.lbl_title.setObjectName("metric_label")
+        self.lbl_title.setWordWrap(True)
+        self.lbl_title.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_title)
 
         self.lbl_val = QLabel(f"{default_val} {unit}".strip())
         self.lbl_val.setObjectName("metric_val")
+        self.lbl_val.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_val)
 
     def set_value(self, val):
@@ -34,29 +38,34 @@ class ModeCard(QPushButton):
         self.setCheckable(True)
         self.setProperty("class", "mode-btn")
         self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(105)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(4)
 
         header_layout = QHBoxLayout()
+        header_layout.setSpacing(6)
         self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #f8fafc;")
-        header_layout.addWidget(self.lbl_title)
+        self.lbl_title.setWordWrap(True)
+        self.lbl_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #f8fafc;")
+        header_layout.addWidget(self.lbl_title, stretch=1)
 
         self.lbl_badge = QLabel(badge)
-        self.lbl_badge.setStyleSheet("background-color: #3b82f6; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold;")
-        header_layout.addWidget(self.lbl_badge)
-        header_layout.addStretch()
+        self.lbl_badge.setStyleSheet("background-color: #3b82f6; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold; white-space: nowrap;")
+        header_layout.addWidget(self.lbl_badge, alignment=Qt.AlignRight | Qt.AlignTop)
         layout.addLayout(header_layout)
 
         self.lbl_desc = QLabel(description)
         self.lbl_desc.setWordWrap(True)
-        self.lbl_desc.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.lbl_desc.setStyleSheet("color: #94a3b8; font-size: 11px; line-height: 1.3;")
         layout.addWidget(self.lbl_desc)
 
+        layout.addStretch()
+
         footer_layout = QHBoxLayout()
-        lbl_hr_tag = QLabel(f"予想ハッシュレート: <b style='color:#38bdf8;'>{est_hr}</b>")
+        lbl_hr_tag = QLabel(f"予想: <b style='color:#38bdf8;'>{est_hr}</b>")
+        lbl_hr_tag.setWordWrap(True)
         lbl_hr_tag.setStyleSheet("font-size: 11px; color: #cbd5e1;")
         footer_layout.addWidget(lbl_hr_tag)
         layout.addLayout(footer_layout)
@@ -85,6 +94,7 @@ class LogConsole(QWidget):
         self.text_edit = QTextEdit()
         self.text_edit.setObjectName("log_view")
         self.text_edit.setReadOnly(True)
+        self.text_edit.setMinimumHeight(130)
         layout.addWidget(self.text_edit)
 
     def append_log(self, text: str, level: str = "info"):
