@@ -23,7 +23,8 @@ class OpenCLMinerWorker(QThread):
     def __init__(self, mode: str, target_type: str, device_target: str,
                  pool_url: str, wallet: str, worker: str,
                  solo_host: str, solo_port: int, solo_user: str, solo_pass: str,
-                 cpu_threads: int, hardware_mgr, selected_gpu_indices: list = None):
+                 cpu_threads: int, hardware_mgr, selected_gpu_indices: list = None,
+                 pool_password: str = "x"):
         super().__init__()
         self.mode = mode
         self.target_type = target_type
@@ -31,6 +32,7 @@ class OpenCLMinerWorker(QThread):
         self.pool_url = pool_url
         self.wallet = wallet
         self.worker_name = worker
+        self.pool_password = pool_password or "x"
         self.solo_host = solo_host
         self.solo_port = solo_port
         self.solo_user = solo_user
@@ -124,12 +126,18 @@ class OpenCLMinerWorker(QThread):
                 host = clean_url
                 port = 8888
 
-            full_user = f"{self.wallet}.{self.worker_name}" if self.wallet else self.worker_name
+            if "." in self.worker_name:
+                full_user = self.worker_name
+            elif self.wallet:
+                full_user = f"{self.wallet}.{self.worker_name}"
+            else:
+                full_user = self.worker_name
+
             self.stratum = StratumClient(
                 host=host,
                 port=port,
                 username=full_user,
-                password="x",
+                password=self.pool_password,
                 on_log=lambda msg, lvl: self.log_message.emit(f"[Stratum] {msg}", lvl),
                 on_new_job=self._on_new_stratum_job
             )

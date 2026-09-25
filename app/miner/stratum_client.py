@@ -225,7 +225,9 @@ class StratumClient:
             if result:
                 self.log(f"Stratum 認証成功: ワーカー '{self.username}'", "success")
             else:
-                self.log(f"Stratum 認証失敗: {error}", "error")
+                self.log(f"Stratum 認証拒絶: プールに拒絶されました (送信ユーザー名: '{self.username}')", "error")
+                if "vippool" in self.host.lower():
+                    self.log("💡 VIPPOOLヒント: VIPPOOLはWeb登録制プールです。Web(vippool.net)で登録した『アカウント名.ワーカー名』を入力してください。", "warn")
 
         # 3. Notification: set_difficulty
         elif method == "mining.set_difficulty":

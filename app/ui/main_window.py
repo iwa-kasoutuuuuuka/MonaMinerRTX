@@ -322,6 +322,15 @@ class MainWindow(QMainWindow):
         self.edit_worker.textChanged.connect(lambda t: self.config_mgr.set("worker_name", t.strip()))
         tab_pool_layout.addWidget(self.edit_worker, 0, 3)
 
+        tab_pool_layout.addWidget(QLabel("ワーカー パスワード:"), 1, 0)
+        self.edit_pool_pass = QLineEdit(self.config_mgr.get("pool_password", "x"))
+        self.edit_pool_pass.textChanged.connect(lambda t: self.config_mgr.set("pool_password", t.strip()))
+        tab_pool_layout.addWidget(self.edit_pool_pass, 1, 1)
+
+        lbl_pool_hint = QLabel("💡 ヒント: VIPPOOL等の登録制プールは『アカウント名.ワーカー名』を入力してください。アドレス直掘りプールはワーカー名単体でOKです。")
+        lbl_pool_hint.setStyleSheet("color: #a5b4fc; font-size: 11px;")
+        tab_pool_layout.addWidget(lbl_pool_hint, 2, 0, 1, 4)
+
         self.tabs_target.addTab(tab_pool, "🏊 プールマイニング (Stratum)")
 
         # Tab 2: Solo Mining
@@ -858,7 +867,11 @@ class MainWindow(QMainWindow):
         else:
             addr = self.edit_address.text().strip()
             valid, msg = validate_mona_address(addr)
-            if not valid and not self.auto_started_by_idle:
+            if not valid:
+                if self.auto_started_by_idle:
+                    self.console.append_log("⚠ 受取アドレスが未入力または不正なため、スマート・アイドル自動採掘を保留しました。", "warn")
+                    self.auto_started_by_idle = False
+                    return
                 reply = QMessageBox.warning(
                     self, "アドレス確認",
                     f"入力されたモナコインアドレスに警告があります:\n{msg}\n\nこのままテスト採掘を続行しますか？",
@@ -871,6 +884,7 @@ class MainWindow(QMainWindow):
             dev = self.device_target
             pool_url = self.combo_pool.currentData()
             worker = self.edit_worker.text().strip() or "worker1"
+            pool_pass = self.edit_pool_pass.text().strip() or "x"
             solo_host = self.edit_solo_host.text().strip() or "127.0.0.1"
             solo_port = self.spin_solo_port.value()
             solo_user = self.edit_solo_user.text().strip()
@@ -919,7 +933,8 @@ class MainWindow(QMainWindow):
                 cpu_threads=cpu_threads,
                 custom_path=custom_path,
                 use_sim=use_sim,
-                selected_gpu_indices=selected_gpus
+                selected_gpu_indices=selected_gpus,
+                pool_password=pool_pass
             )
 
             if self.discord_notifier.enabled:

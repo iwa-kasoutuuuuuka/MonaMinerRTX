@@ -54,6 +54,7 @@ class ConfigManager:
             "pool_index": 0,
             "custom_pool_url": "",
             "worker_name": "rtx5080_worker",
+            "pool_password": "x",
             "solo_host": "127.0.0.1",
             "solo_port": 9402,
             "solo_user": "monacoinrpc",

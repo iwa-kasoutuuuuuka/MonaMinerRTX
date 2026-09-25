@@ -296,7 +296,8 @@ class MinerController(QObject):
                      solo_user: str = "", solo_pass: str = "",
                      cpu_threads: int = 16,
                      custom_path: str = "", use_sim: bool = True,
-                     selected_gpu_indices: list = None):
+                     selected_gpu_indices: list = None,
+                     pool_password: str = "x"):
         if self.is_mining:
             return
 
@@ -328,11 +329,12 @@ class MinerController(QObject):
                     "-i", str(intensity)
                 ]
             else:
+                user_param = worker if "." in worker else (f"{wallet}.{worker}" if wallet else worker)
                 args = [
                     "-a", "lyra2v2",
                     "-o", pool_url,
-                    "-u", f"{wallet}.{worker}",
-                    "-p", "x",
+                    "-u", user_param,
+                    "-p", pool_password or "x",
                     "-i", str(intensity)
                 ]
             self.worker = ProcessWorker(custom_path, args, self.hardware_mgr)
@@ -341,7 +343,7 @@ class MinerController(QObject):
             self.worker.log_message.connect(self.log_received)
             self.worker.process_exited.connect(self._on_process_exited)
             self.worker.start()
-        elif not use_sim:
+        elif not use_sim and device_target in ["gpu", "hybrid"]:
             # Native Built-in OpenCL Miner Engine (Pure GPU JIT, no external binaries required)
             self.worker = OpenCLMinerWorker(
                 mode=mode,
@@ -356,7 +358,8 @@ class MinerController(QObject):
                 solo_pass=solo_pass,
                 cpu_threads=cpu_threads,
                 hardware_mgr=self.hardware_mgr,
-                selected_gpu_indices=selected_gpu_indices or [0]
+                selected_gpu_indices=selected_gpu_indices or [0],
+                pool_password=pool_password or "x"
             )
             self.worker.hashrate_update.connect(self.hashrate_changed)
             self.worker.shares_update.connect(self.shares_changed)
