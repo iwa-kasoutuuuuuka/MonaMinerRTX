@@ -1,6 +1,18 @@
-# MonaMiner RTX (モナコイン GUI マイニングスタジオ)
+<div align="center">
 
-NVIDIA GeForce **RTX 5080 (Blackwell アーキテクチャ)** および **多コアCPU（Ryzen等）** に特化した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイニングアプリケーションです。
+<img src="assets/icon.png" width="120" height="120" alt="MonaMiner RTX Logo">
+
+# MonaMiner RTX
+### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
+
+[![Release](https://img.shields.io/badge/Release-v1.2.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.0.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.0.0.zip)
+[![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**NVIDIA GeForce RTX 5080 (Blackwell アーキテクチャ)** および **多コアCPU（Ryzen等）** に特化した、モナコイン向けハイブリッドGUIマイナーです。
+
+</div>
 
 ---
 
@@ -136,16 +148,19 @@ NVIDIA GeForce **RTX 5080 (Blackwell アーキテクチャ)** および **多コ
 
 ## 📦 配布用ポータブル版 (Portable Edition)
 
-Python や各種ライブラリのインストールが**一切不要**な単体配布版です。
+Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
-* **ZIPアーカイブ**: `dist/MonaMinerRTX_Portable_v1.0.0.zip`
-* **展開フォルダ**: `dist/MonaMinerRTX/`
+### 📥 ダウンロード (直リンク)
+* **[🚀 MonaMinerRTX_Portable_v1.0.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.0.0.zip)** (約 45.8 MB)
+* **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
+
+---
 
 ### 自身でポータブル版を再ビルドする場合
 ```powershell
 python build_portable.py
 ```
-PyInstaller により、必要なDLLや設定ファイル、起動バッチを自動パッケージングして `dist/` に出力します。
+PyInstaller により、必要なDLL・アプリアイコン・設定ファイル・起動バッチを自動パッケージングして `dist/` に出力します。
 
 ---
 
