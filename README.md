@@ -187,7 +187,7 @@
 Python や各種ライブラリのインストールが**一切不要**な単体配布版です。ZIPを解凍して `起動する.bat` をダブルクリックするだけですぐにマイニングを開始できます。
 
 ### 📥 ダウンロード (直リンク)
-* **[🚀 MonaMinerRTX_Portable_v1.5.1.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.1.zip)** (約 46 MB)
+* **[🚀 MonaMinerRTX_Portable_v2.0.0.zip (直接ダウンロード)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)** (約 46.4 MB)
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
 
 ---
