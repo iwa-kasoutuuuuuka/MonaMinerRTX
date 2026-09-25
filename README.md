@@ -194,14 +194,16 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 | 対象OS | ファイル名 | 容量 | ダウンロードリンク (Direct Download) |
 |:---|:---|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.0.0)** | `MonaMinerRTX_Portable_v2.0.0.zip` | 約 46.4 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)** |
+| 🪟 **Windows 64bit ポータブル版 (v2.1.0 - 超高速版)** | `MonaMinerRTX_Portable_v2.1.0.zip` | 約 46.4 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.0.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
 > 上記リンクをクリックすると、GitHubから直接 ZIP ファイルのダウンロードが開始されます。
 > 解凍後、フォルダ内の **`起動する.bat`** をダブルクリックするだけで、Pythonの事前インストールなしですぐにマイニングスタジオが起動します。
+> （※ GPU電力上限を直接下げたい場合は、`起動する.bat` を右クリックして「管理者として実行」を選択してください）
 
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
+* **[🏷️ v2.1.0 タグ (ソースコード・バイナリ)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/tree/v2.1.0)**
 
 ---
 
