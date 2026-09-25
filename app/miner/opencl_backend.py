@@ -241,6 +241,27 @@ class OpenCLBackend:
             })
         return res
 
+    @classmethod
+    def get_all_gpu_devices(cls):
+        """
+        Discovers all available OpenCL GPU devices across all platforms.
+        Returns a flat list of dicts with platform and device info.
+        """
+        all_devs = []
+        global_idx = 0
+        platforms = cls.get_platforms()
+        for p in platforms:
+            devices = cls.get_devices(p["id"], CL_DEVICE_TYPE_GPU)
+            for d in devices:
+                dev_copy = dict(d)
+                dev_copy["global_index"] = global_idx
+                dev_copy["platform_id"] = p["id"]
+                dev_copy["platform_name"] = p["name"]
+                dev_copy["platform_vendor"] = p["vendor"]
+                all_devs.append(dev_copy)
+                global_idx += 1
+        return all_devs
+
 class OpenCLContext:
     """
     Manages an OpenCL Context, Command Queue, and Program compilation for a single device.

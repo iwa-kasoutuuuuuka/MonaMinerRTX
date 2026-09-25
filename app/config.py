@@ -64,7 +64,20 @@ class ConfigManager:
             "custom_miner_path": "",
             "custom_cpuminer_path": "",
             "use_simulator": True, # Default to test/simulation mode
-            "auto_start_mining": False
+            "auto_start_mining": False,
+            # v2.0.0 New Features
+            "idle_mining_enabled": False,
+            "idle_mining_minutes": 5,
+            "electricity_rate_yen": 31.0,
+            "mona_jpy_price": 45.0,
+            "discord_webhook_url": "",
+            "discord_notify_events": True,
+            "web_dashboard_enabled": True,
+            "web_dashboard_port": 8888,
+            "multi_gpu_enabled": False,
+            "selected_gpu_indices": [0],
+            "power_limit_watts": 0,
+            "target_fan_percent": 0
         }
         self.load()
 

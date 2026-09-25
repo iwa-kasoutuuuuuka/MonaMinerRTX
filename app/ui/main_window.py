@@ -1,9 +1,12 @@
 import os
+import sys
+import webbrowser
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QFrame,
     QFileDialog, QMessageBox, QTabWidget, QRadioButton, QButtonGroup,
-    QSpinBox, QSlider, QStackedWidget, QScrollArea, QSizePolicy
+    QSpinBox, QDoubleSpinBox, QSlider, QStackedWidget, QScrollArea, QSizePolicy,
+    QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -12,26 +15,50 @@ from app.miner_controller import MinerController
 from app.config import ConfigManager, DEFAULT_POOLS, validate_mona_address
 from app.ui.components import MetricCard, ModeCard, LogConsole
 from app.ui.styles import MAIN_STYLE
+from app.services import (
+    IdleTracker, ProfitCalculator, DiscordNotifier,
+    GpuHardwareController, WebMonitoringServer
+)
+from app.miner.opencl_backend import OpenCLBackend
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MonaMiner RTX v1.3.0 - モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
-        self.setMinimumSize(880, 600)
-        self.resize(1060, 840)
+        self.setWindowTitle("MonaMiner RTX / RX v2.0.0 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self.setMinimumSize(920, 640)
+        self.resize(1120, 880)
         self.setStyleSheet(MAIN_STYLE)
 
         self.config_mgr = ConfigManager()
         self.hw_mgr = HardwareManager()
         self.miner_ctrl = MinerController(self.hw_mgr)
 
+        # v2.0.0 Services
+        self.profit_calc = ProfitCalculator(
+            electricity_rate_yen=self.config_mgr.get("electricity_rate_yen", 31.0),
+            mona_jpy_price=self.config_mgr.get("mona_jpy_price", 45.0)
+        )
+        self.discord_notifier = DiscordNotifier(
+            webhook_url=self.config_mgr.get("discord_webhook_url", "")
+        )
+        self.gpu_ctrl = GpuHardwareController()
+        self.idle_tracker = IdleTracker(check_interval_ms=1000)
+        self.idle_tracker.set_threshold_minutes(self.config_mgr.get("idle_mining_minutes", 5))
+
+        self.web_server = WebMonitoringServer(
+            port=self.config_mgr.get("web_dashboard_port", 8888)
+        )
+
         self.current_mode = self.config_mgr.get("miner_mode", "auto")
         self.target_type = self.config_mgr.get("mining_target", "pool") # 'pool' or 'solo'
         self.device_target = self.config_mgr.get("device_target", "gpu") # 'gpu', 'cpu', 'hybrid'
         self.mode_cards = {}
+        self.mining_start_time = None
+        self.auto_started_by_idle = False
 
         self._setup_ui()
         self._connect_signals()
+        self._setup_services()
 
         # Telemetry refresh timer (every 1 second)
         self.telemetry_timer = QTimer(self)
@@ -131,16 +158,16 @@ class MainWindow(QMainWindow):
         status_bar.setSpacing(8)
         self.card_hashrate = MetricCard("ハッシュレート", "0.0", "MH/s")
         self.card_power = MetricCard("消費電力", "0.0", "W")
-        self.card_eff = MetricCard("電力効率", "--", "MH/W")
-        self.card_gpu_temp = MetricCard("GPU 温度", "--", "℃")
-        self.card_cpu_util = MetricCard("CPU 使用率", "--", "%")
+        self.card_cost = MetricCard("推定電気代 (1日)", "¥0.0", "目安")
+        self.card_eff = MetricCard("電力効率", "--", "W/MH")
+        self.card_gpu_temp = MetricCard("GPU 温度 / ファン", "--", "℃ / %")
         self.card_shares = MetricCard("承認シェア / ブロック", "0 / 0", "")
 
         status_bar.addWidget(self.card_hashrate)
         status_bar.addWidget(self.card_power)
+        status_bar.addWidget(self.card_cost)
         status_bar.addWidget(self.card_eff)
         status_bar.addWidget(self.card_gpu_temp)
-        status_bar.addWidget(self.card_cpu_util)
         status_bar.addWidget(self.card_shares)
         main_layout.addLayout(status_bar)
 
@@ -333,6 +360,142 @@ class MainWindow(QMainWindow):
 
         self.tabs_target.addTab(tab_solo, "🏠 ソロマイニング (Monacoin Core RPC)")
 
+        # Tab 3: Smart Idle Auto-Mining
+        tab_idle = QWidget()
+        tab_idle_layout = QGridLayout(tab_idle)
+        tab_idle_layout.setContentsMargins(8, 8, 8, 8)
+        tab_idle_layout.setHorizontalSpacing(10)
+        tab_idle_layout.setVerticalSpacing(8)
+
+        self.chk_idle_enable = QCheckBox("離席時の自動採掘を有効化 (PC操作停止で自動スタート)")
+        self.chk_idle_enable.setChecked(self.config_mgr.get("idle_mining_enabled", False))
+        self.chk_idle_enable.toggled.connect(self._on_idle_enable_toggled)
+        tab_idle_layout.addWidget(self.chk_idle_enable, 0, 0, 1, 2)
+
+        tab_idle_layout.addWidget(QLabel("放置判定時間:"), 1, 0)
+        idle_row = QHBoxLayout()
+        self.spin_idle_min = QSpinBox()
+        self.spin_idle_min.setRange(1, 120)
+        self.spin_idle_min.setValue(self.config_mgr.get("idle_mining_minutes", 5))
+        self.spin_idle_min.valueChanged.connect(self._on_idle_min_changed)
+        idle_row.addWidget(self.spin_idle_min)
+        idle_row.addWidget(QLabel("分間放置で採掘開始 (キーボード・マウス操作再開で即停止)"))
+        idle_row.addStretch()
+        tab_idle_layout.addLayout(idle_row, 1, 1)
+
+        tab_idle_layout.addWidget(QLabel("現在の状態:"), 2, 0)
+        self.lbl_idle_state = QLabel("PC操作検知中 (アイドル待機)")
+        self.lbl_idle_state.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        tab_idle_layout.addWidget(self.lbl_idle_state, 2, 1)
+
+        self.tabs_target.addTab(tab_idle, "🤖 スマート・アイドル採掘")
+
+        # Tab 4: Electricity & Profit Calculator
+        tab_profit = QWidget()
+        tab_profit_layout = QGridLayout(tab_profit)
+        tab_profit_layout.setContentsMargins(8, 8, 8, 8)
+        tab_profit_layout.setHorizontalSpacing(10)
+        tab_profit_layout.setVerticalSpacing(8)
+
+        tab_profit_layout.addWidget(QLabel("電気料金単価 (円/kWh):"), 0, 0)
+        self.spin_elec_rate = QDoubleSpinBox()
+        self.spin_elec_rate.setRange(1.0, 100.0)
+        self.spin_elec_rate.setSingleStep(0.5)
+        self.spin_elec_rate.setValue(self.config_mgr.get("electricity_rate_yen", 31.0))
+        self.spin_elec_rate.valueChanged.connect(self._on_elec_rate_changed)
+        tab_profit_layout.addWidget(self.spin_elec_rate, 0, 1)
+
+        tab_profit_layout.addWidget(QLabel("MONA参考価格 (円):"), 0, 2)
+        self.spin_mona_price = QDoubleSpinBox()
+        self.spin_mona_price.setRange(1.0, 10000.0)
+        self.spin_mona_price.setValue(self.config_mgr.get("mona_jpy_price", 45.0))
+        self.spin_mona_price.valueChanged.connect(self._on_mona_price_changed)
+        tab_profit_layout.addWidget(self.spin_mona_price, 0, 3)
+
+        self.lbl_profit_summary = QLabel("採掘稼働時にリアルタイムで電気代と推定純利益が計算されます。")
+        self.lbl_profit_summary.setStyleSheet("color: #a7f3d0; font-size: 12px; font-weight: bold;")
+        tab_profit_layout.addWidget(self.lbl_profit_summary, 1, 0, 1, 4)
+
+        self.tabs_target.addTab(tab_profit, "💰 電気代・収益性計算")
+
+        # Tab 5: Web Dashboard & Discord Webhook
+        tab_remote = QWidget()
+        tab_remote_layout = QGridLayout(tab_remote)
+        tab_remote_layout.setContentsMargins(8, 8, 8, 8)
+        tab_remote_layout.setHorizontalSpacing(10)
+        tab_remote_layout.setVerticalSpacing(8)
+
+        self.chk_web_enable = QCheckBox("スマホ対応 内蔵Webダッシュボードを起動 (LAN内ブラウザ閲覧)")
+        self.chk_web_enable.setChecked(self.config_mgr.get("web_dashboard_enabled", True))
+        self.chk_web_enable.toggled.connect(self._on_web_server_toggled)
+        tab_remote_layout.addWidget(self.chk_web_enable, 0, 0, 1, 2)
+
+        tab_remote_layout.addWidget(QLabel("Webポート:"), 1, 0)
+        web_port_row = QHBoxLayout()
+        self.spin_web_port = QSpinBox()
+        self.spin_web_port.setRange(1024, 65535)
+        self.spin_web_port.setValue(self.config_mgr.get("web_dashboard_port", 8888))
+        self.spin_web_port.valueChanged.connect(lambda v: self.config_mgr.set("web_dashboard_port", v))
+        web_port_row.addWidget(self.spin_web_port)
+
+        btn_open_browser = QPushButton("🌐 ブラウザでダッシュボードを開く")
+        btn_open_browser.setStyleSheet("background-color: #2563eb; color: white; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+        btn_open_browser.setCursor(Qt.PointingHandCursor)
+        btn_open_browser.clicked.connect(self._open_web_dashboard)
+        web_port_row.addWidget(btn_open_browser)
+        web_port_row.addStretch()
+        tab_remote_layout.addLayout(web_port_row, 1, 1, 1, 3)
+
+        tab_remote_layout.addWidget(QLabel("Discord Webhook URL:"), 2, 0)
+        self.edit_discord = QLineEdit(self.config_mgr.get("discord_webhook_url", ""))
+        self.edit_discord.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.edit_discord.textChanged.connect(self._on_discord_url_changed)
+        tab_remote_layout.addWidget(self.edit_discord, 2, 1, 1, 2)
+
+        btn_test_discord = QPushButton("🔔 テスト送信")
+        btn_test_discord.setStyleSheet("background-color: #4f46e5; color: white; border-radius: 4px; padding: 4px 10px;")
+        btn_test_discord.clicked.connect(self._test_discord_notification)
+        tab_remote_layout.addWidget(btn_test_discord, 2, 3)
+
+        self.tabs_target.addTab(tab_remote, "🌐 遠隔監視・通知")
+
+        # Tab 6: Hardware & Multi-GPU
+        tab_hw = QWidget()
+        tab_hw_layout = QGridLayout(tab_hw)
+        tab_hw_layout.setContentsMargins(8, 8, 8, 8)
+        tab_hw_layout.setHorizontalSpacing(10)
+        tab_hw_layout.setVerticalSpacing(8)
+
+        tab_hw_layout.addWidget(QLabel("検出された OpenCL GPU デバイス (Multi-GPU 同時採掘):"), 0, 0, 1, 4)
+        self.list_gpus = QListWidget()
+        self.list_gpus.setStyleSheet("background-color: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #f8fafc;")
+        self.list_gpus.setFixedHeight(75)
+        self._populate_gpu_list()
+        tab_hw_layout.addWidget(self.list_gpus, 1, 0, 1, 4)
+
+        # NVIDIA Hardware control row
+        tab_hw_layout.addWidget(QLabel("GPU 電力リミット (W):"), 2, 0)
+        self.spin_power_limit = QSpinBox()
+        self.spin_power_limit.setRange(0, 800)
+        self.spin_power_limit.setValue(self.config_mgr.get("power_limit_watts", 0))
+        self.spin_power_limit.setSpecialValueText("自動 (制限なし)")
+        tab_hw_layout.addWidget(self.spin_power_limit, 2, 1)
+
+        tab_hw_layout.addWidget(QLabel("目標ファン速度 (%):"), 2, 2)
+        self.spin_fan_speed = QSpinBox()
+        self.spin_fan_speed.setRange(0, 100)
+        self.spin_fan_speed.setValue(self.config_mgr.get("target_fan_percent", 0))
+        self.spin_fan_speed.setSpecialValueText("自動 (VBIOS制御)")
+        tab_hw_layout.addWidget(self.spin_fan_speed, 2, 3)
+
+        btn_apply_hw = QPushButton("⚡ ハードウェア設定 (電力・ファン) を即時適用")
+        btn_apply_hw.setStyleSheet("background-color: #059669; color: white; border-radius: 4px; padding: 6px; font-weight: bold;")
+        btn_apply_hw.setCursor(Qt.PointingHandCursor)
+        btn_apply_hw.clicked.connect(self._apply_gpu_hardware_settings)
+        tab_hw_layout.addWidget(btn_apply_hw, 3, 0, 1, 4)
+
+        self.tabs_target.addTab(tab_hw, "🔧 ハードウェア制御 (Multi-GPU)")
+
         # Set saved tab
         if self.config_mgr.get("mining_target", "pool") == "solo":
             self.tabs_target.setCurrentIndex(1)
@@ -460,13 +623,242 @@ class MainWindow(QMainWindow):
             self.console.append_log(f"外部マイナー設定: {path}", "info")
             QMessageBox.information(self, "設定完了", f"外部マイナーを設定しました:\n{path}")
 
+    def _setup_services(self):
+        # Idle Tracker signals
+        self.idle_tracker.idle_changed.connect(self._on_idle_changed)
+        self.idle_tracker.idle_seconds_updated.connect(self._on_idle_seconds_updated)
+        if self.config_mgr.get("idle_mining_enabled", False):
+            self.idle_tracker.start()
+
+        # Web Monitoring Server
+        if self.config_mgr.get("web_dashboard_enabled", True):
+            self._start_web_server()
+
+    def _start_web_server(self):
+        port = self.config_mgr.get("web_dashboard_port", 8888)
+        self.web_server.port = port
+        try:
+            self.web_server.start(
+                get_status_fn=self._get_web_status,
+                start_fn=self._remote_start_mining,
+                stop_fn=self._remote_stop_mining
+            )
+            self.console.append_log(f"🌐 Web監視ダッシュボード起動完了: http://localhost:{port}", "info")
+        except Exception as e:
+            self.console.append_log(f"Web監視サーバー起動エラー: {e}", "warn")
+
+    def _on_web_server_toggled(self, checked: bool):
+        self.config_mgr.set("web_dashboard_enabled", checked)
+        if checked:
+            self._start_web_server()
+        else:
+            self.web_server.stop()
+            self.console.append_log("Web監視サーバーを停止しました。", "info")
+
+    def _open_web_dashboard(self):
+        port = self.config_mgr.get("web_dashboard_port", 8888)
+        webbrowser.open(f"http://localhost:{port}")
+
+    def _on_idle_enable_toggled(self, checked: bool):
+        self.config_mgr.set("idle_mining_enabled", checked)
+        if checked:
+            self.idle_tracker.start()
+            self.console.append_log("🤖 スマート・アイドル自動採掘を有効化しました。", "info")
+        else:
+            self.idle_tracker.stop()
+            self.lbl_idle_state.setText("機能無効 (手動マイニングのみ)")
+            self.lbl_idle_state.setStyleSheet("color: #94a3b8;")
+            self.console.append_log("スマート・アイドル自動採掘を無効化しました。", "info")
+
+    def _on_idle_min_changed(self, val: int):
+        self.config_mgr.set("idle_mining_minutes", val)
+        self.idle_tracker.set_threshold_minutes(val)
+
+    def _on_idle_changed(self, is_idle: bool):
+        if is_idle and not self.miner_ctrl.is_mining:
+            self.auto_started_by_idle = True
+            self.console.append_log("💤 PCアイドルを検知: スマート自動マイニングを開始しました。", "success")
+            self._toggle_mining()
+        elif not is_idle and self.miner_ctrl.is_mining and self.auto_started_by_idle:
+            self.auto_started_by_idle = False
+            self.console.append_log("⚡ PC操作を検知: スマート自動マイニングを一時停止しました。", "warn")
+            self._toggle_mining()
+
+    def _on_idle_seconds_updated(self, sec: int):
+        if not self.config_mgr.get("idle_mining_enabled", False):
+            return
+        threshold = self.idle_tracker.idle_threshold_seconds
+        if sec >= threshold:
+            self.lbl_idle_state.setText(f"💤 放置中 ({sec}秒経過) - 自動採掘稼働中")
+            self.lbl_idle_state.setStyleSheet("color: #34d399; font-weight: bold;")
+        else:
+            remaining = threshold - sec
+            self.lbl_idle_state.setText(f"● ユーザー操作検知中 (残り {remaining}秒 で自動採掘開始)")
+            self.lbl_idle_state.setStyleSheet("color: #38bdf8; font-weight: bold;")
+
+    def _on_elec_rate_changed(self, val: float):
+        self.config_mgr.set("electricity_rate_yen", val)
+        self.profit_calc.electricity_rate_yen = val
+
+    def _on_mona_price_changed(self, val: float):
+        self.config_mgr.set("mona_jpy_price", val)
+        self.profit_calc.mona_jpy_price = val
+
+    def _on_discord_url_changed(self, url: str):
+        self.config_mgr.set("discord_webhook_url", url.strip())
+        self.discord_notifier.set_webhook_url(url.strip())
+
+    def _test_discord_notification(self):
+        url = self.edit_discord.text().strip()
+        if not url:
+            QMessageBox.warning(self, "エラー", "Discord Webhook URL を入力してください。")
+            return
+        self.discord_notifier.set_webhook_url(url)
+        self.discord_notifier.send_embed(
+            title="🔔 MonaMinerRTX 接続テスト",
+            description="Discord Webhook への接続に成功しました！採掘通知を受信できます。",
+            color=0x38BDF8,
+            fields=[
+                {"name": "バージョン", "value": "v2.0.0", "inline": True},
+                {"name": "ステータス", "value": "Ready", "inline": True}
+            ]
+        )
+        self.console.append_log("Discord へテスト通知を送信しました。", "info")
+
+    def _populate_gpu_list(self):
+        self.list_gpus.clear()
+        saved_indices = self.config_mgr.get("selected_gpu_indices", [0])
+        try:
+            devs = OpenCLBackend.get_all_gpu_devices()
+            if not devs:
+                item = QListWidgetItem("利用可能な OpenCL GPU が検出されませんでした")
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+                self.list_gpus.addItem(item)
+                return
+
+            for d in devs:
+                idx = d["global_index"]
+                label = f"GPU #{idx}: {d['name']} ({d['platform_name']} - VRAM {d['global_mem_gb']}GB)"
+                item = QListWidgetItem(label)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                check_state = Qt.Checked if (idx in saved_indices or len(devs) == 1) else Qt.Unchecked
+                item.setCheckState(check_state)
+                item.setData(Qt.UserRole, idx)
+                self.list_gpus.addItem(item)
+        except Exception as e:
+            item = QListWidgetItem(f"デバイス列挙エラー: {e}")
+            self.list_gpus.addItem(item)
+
+    def _get_selected_gpu_indices(self) -> list:
+        indices = []
+        for i in range(self.list_gpus.count()):
+            item = self.list_gpus.item(i)
+            if item.checkState() == Qt.Checked:
+                idx = item.data(Qt.UserRole)
+                if idx is not None:
+                    indices.append(idx)
+        if not indices:
+            indices = [0]
+        self.config_mgr.set("selected_gpu_indices", indices)
+        return indices
+
+    def _apply_gpu_hardware_settings(self):
+        pwr = self.spin_power_limit.value()
+        fan = self.spin_fan_speed.value()
+        self.config_mgr.set("power_limit_watts", pwr)
+        self.config_mgr.set("target_fan_percent", fan)
+
+        if not self.gpu_ctrl.is_available:
+            QMessageBox.information(self, "ハードウェア制御", "NVML が利用できない環境です (AMD GPU またはドライバ未検出)。")
+            return
+
+        msg_list = []
+        if pwr > 0:
+            ok, msg = self.gpu_ctrl.set_power_limit(0, pwr)
+            msg_list.append(f"電力リミット: {msg}")
+        if fan > 0:
+            ok, msg = self.gpu_ctrl.set_fan_speed(0, fan)
+            msg_list.append(f"ファン制御: {msg}")
+
+        result_txt = "\n".join(msg_list) if msg_list else "自動制御に設定されています。"
+        self.console.append_log(f"[HW制御] {result_txt}", "info")
+        QMessageBox.information(self, "設定結果", result_txt)
+
+    def _get_web_status(self) -> dict:
+        m = self.hw_mgr.get_live_metrics()
+        hr_val = float(self.card_hashrate.lbl_val.text().replace(" MH/s", "") or "0.0")
+        pwr_val = float(self.card_power.lbl_val.text().replace(" W", "") or "0.0")
+        calc = self.profit_calc.calculate(hr_val, pwr_val)
+
+        gpu_info = self.gpu_ctrl.get_device_info(0) if self.gpu_ctrl.is_available else {}
+        temp_val = gpu_info.get("temp_c", m.get("temp_c", 0))
+        fan_val = gpu_info.get("fan_percent", 0)
+
+        # Uptime string
+        uptime_str = "00:00:00"
+        if self.mining_start_time and self.miner_ctrl.is_mining:
+            import time
+            sec = int(time.time() - self.mining_start_time)
+            hrs = sec // 3600
+            mins = (sec % 3600) // 60
+            secs = sec % 60
+            uptime_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+        shares_txt = self.card_shares.lbl_val.text()
+        accepted = 0
+        rejected = 0
+        if "/" in shares_txt:
+            parts = shares_txt.split("/")
+            try:
+                accepted = int(parts[0].strip())
+                tot = int(parts[1].strip())
+                rejected = max(0, tot - accepted)
+            except Exception:
+                pass
+
+        # Logs
+        logs = []
+        if hasattr(self, 'console') and hasattr(self.console, 'text_edit'):
+            plain = self.console.text_edit.toPlainText()
+            lines = plain.strip().split("\n")
+            logs = lines[-12:]
+
+        return {
+            "is_mining": self.miner_ctrl.is_mining,
+            "hashrate_mhs": hr_val,
+            "power_w": pwr_val,
+            "watt_per_mh": calc.get("watt_per_mh", 0.0),
+            "temp_c": temp_val,
+            "fan_percent": fan_val,
+            "accepted_shares": accepted,
+            "rejected_shares": rejected,
+            "hourly_cost_yen": calc.get("hourly_cost_yen", 0.0),
+            "daily_cost_yen": calc.get("daily_cost_yen", 0.0),
+            "uptime_str": uptime_str,
+            "recent_logs": logs
+        }
+
+    def _remote_start_mining(self):
+        # Trigger GUI toggle mining via QTimer
+        QTimer.singleShot(0, lambda: self._toggle_mining() if not self.miner_ctrl.is_mining else None)
+
+    def _remote_stop_mining(self):
+        QTimer.singleShot(0, lambda: self._toggle_mining() if self.miner_ctrl.is_mining else None)
+
     def _toggle_mining(self):
         if self.miner_ctrl.is_mining:
             self.miner_ctrl.stop_mining()
+            self.mining_start_time = None
+            if self.discord_notifier.enabled:
+                self.discord_notifier.send_embed(
+                    title="⏹ マイニング停止",
+                    description="マイニングプロセスが停止しました。",
+                    color=0xEF4444
+                )
         else:
             addr = self.edit_address.text().strip()
             valid, msg = validate_mona_address(addr)
-            if not valid:
+            if not valid and not self.auto_started_by_idle:
                 reply = QMessageBox.warning(
                     self, "アドレス確認",
                     f"入力されたモナコインアドレスに警告があります:\n{msg}\n\nこのままテスト採掘を続行しますか？",
@@ -502,11 +894,16 @@ class MainWindow(QMainWindow):
                     if reply == QMessageBox.No:
                         return
             elif not use_sim:
-                self.console.append_log("⚡ 外部マイナー未指定: 独自内蔵 OpenCL マイナーエンジン (GPU直結) で採掘を開始します。", "info")
+                self.console.append_log("⚡ 独自内蔵 OpenCL マイナーエンジン (GPU直結 Multi-GPU) で採掘を開始します。", "info")
 
             mode = self.current_mode
             if mode == "auto":
                 mode = self.hw_mgr.get_mode_recommendation()["recommended_key"]
+
+            selected_gpus = self._get_selected_gpu_indices()
+
+            import time
+            self.mining_start_time = time.time()
 
             self.miner_ctrl.start_mining(
                 mode=mode,
@@ -521,24 +918,63 @@ class MainWindow(QMainWindow):
                 solo_pass=solo_pass,
                 cpu_threads=cpu_threads,
                 custom_path=custom_path,
-                use_sim=use_sim
+                use_sim=use_sim,
+                selected_gpu_indices=selected_gpus
             )
+
+            if self.discord_notifier.enabled:
+                self.discord_notifier.send_embed(
+                    title="🚀 マイニング開始",
+                    description=f"モナコインの採掘を開始しました ({target_type.upper()})",
+                    color=0x22C55E,
+                    fields=[
+                        {"name": "ターゲット", "value": pool_url if target_type == "pool" else f"{solo_host}:{solo_port}", "inline": False},
+                        {"name": "プロファイル", "value": mode.upper(), "inline": True},
+                        {"name": "GPU台数", "value": f"{len(selected_gpus)} 台", "inline": True}
+                    ]
+                )
 
     def _update_hardware_telemetry(self):
         m = self.hw_mgr.get_live_metrics()
-        self.card_gpu_temp.set_value(f"{m.get('temp_c', 0)}")
-        self.card_cpu_util.set_value(f"{m.get('cpu_util_pct', 0)}")
+        gpu_info = self.gpu_ctrl.get_device_info(0) if self.gpu_ctrl.is_available else {}
+        temp_val = gpu_info.get("temp_c", m.get("temp_c", 0))
+        fan_val = gpu_info.get("fan_percent", 0)
+
+        self.card_gpu_temp.set_value(f"{temp_val} / {fan_val}")
+        
+        # Calculate live electricity cost
+        pwr = m.get("power_w", 0.0)
         if not self.miner_ctrl.is_mining:
-            self.card_power.set_value(f"{m.get('power_w', 0.0):.1f}")
+            self.card_power.set_value(f"{pwr:.1f}")
+        else:
+            pwr = float(self.card_power.lbl_val.text().replace(" W", "") or "0.0")
+
+        hr = float(self.card_hashrate.lbl_val.text().replace(" MH/s", "") or "0.0")
+        calc = self.profit_calc.calculate(hr, pwr)
+        self.card_cost.set_value(f"¥{calc['daily_cost_yen']:.0f}")
+
+        if calc["watt_per_mh"] > 0:
+            self.card_eff.set_value(f"{calc['watt_per_mh']:.3f}")
+        else:
+            self.card_eff.set_value("--")
+
+        # Update profit tab summary
+        if self.miner_ctrl.is_mining and hr > 0:
+            self.lbl_profit_summary.setText(
+                f"【試算結果】 1時間電気代: ¥{calc['hourly_cost_yen']:.1f} / 24時間: ¥{calc['daily_cost_yen']:.0f} / "
+                f"月間: ¥{calc['monthly_cost_yen']:.0f} ｜ 推定日収: {calc['est_daily_mona']:.3f} MONA (約¥{calc['est_daily_revenue_yen']:.0f}) ｜ "
+                f"推定純利益: ¥{calc['est_daily_profit_yen']:.0f}/日"
+            )
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX / RX v1.5.1 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v2.0.0 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")
             self.btn_toggle_mining.setStyle(self.btn_toggle_mining.style())
             self.card_hashrate.set_value("0.0")
             self.card_eff.set_value("--")
+            self.card_cost.set_value("¥0")
         else:
             self.btn_toggle_mining.setObjectName("stop_btn")
             self.btn_toggle_mining.setText("⏹ 採掘停止 (Stop Mining)")
@@ -547,7 +983,9 @@ class MainWindow(QMainWindow):
     def _on_hashrate_changed(self, hr: float, pwr: float, eff: float):
         self.card_hashrate.set_value(f"{hr:.1f}")
         self.card_power.set_value(f"{pwr:.1f}")
-        self.card_eff.set_value(f"{eff:.2f}" if eff > 0 else "--")
+        calc = self.profit_calc.calculate(hr, pwr)
+        self.card_cost.set_value(f"¥{calc['daily_cost_yen']:.0f}")
+        self.card_eff.set_value(f"{calc['watt_per_mh']:.3f}" if calc['watt_per_mh'] > 0 else "--")
 
     def _on_shares_changed(self, accepted: int, rejected: int):
         if self.target_type == "solo":
@@ -558,5 +996,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.miner_ctrl.is_mining:
             self.miner_ctrl.stop_mining()
+        self.web_server.stop()
+        self.idle_tracker.stop()
+        self.gpu_ctrl.shutdown()
         self.hw_mgr.shutdown()
         event.accept()
+

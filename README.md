@@ -5,26 +5,43 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v1.5.1-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v1.5.1.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v1.5.1.zip)
+[![Release](https://img.shields.io/badge/Release-v2.0.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.0.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.0.0.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
-**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載しています。**
+**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。さらにv2.0.0では「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しました。**
 
 </div>
 
 ---
 
-## 🌟 主な特徴
+## 🌟 主な特徴 (v2.0.0)
 
-1. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度最適化)**:
-   - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2（Blake256 -> Keccak256 -> CubeHash -> Lyra2 -> Skein -> BMW）カーネルをJITコンパイル＆並列実行。
+1. **🤖 スマート・アイドル自動採掘 (PC離席時のみ自動スタート)**:
+   - Windows API (`GetLastInputInfo`) によりユーザーのキーボード・マウス操作をミリ秒単位で監視。
+   - 作業中やゲーム中は自動停止（または待機）、指定時間（例: 5分）放置で自動的にフル採掘を開始。普段使いのメインPCでも一切邪魔にならず、空き時間を100%モナーコインに変えます。
+
+2. **💰 リアルタイム電気代・収益性 (W/MH) 計算機**:
+   - GPU消費電力（W）と電気料金単価（円/kWh）から「1時間の電気代」「24時間の電気代」「月間コスト」を即座に試算。
+   - 現在のハッシュレートから推定MONA日収および電気代を差し引いた純利益をリアルタイム算出。「電気代負けしていないか」が一目で分かります。
+
+3. **🚀 Multi-GPU（複数GPU同時並列採掘）**:
+   - 搭載されているすべてのGPU（NVIDIA RTX / AMD Radeonの混載にも対応）を自動検出し、選択したGPU群でNonce空間を重複なく分割並列探索。リグや複数GPU搭載PCの能力を余すところなく引き出します。
+
+4. **🌐 スマホ対応 Web監視ダッシュボード & Discord通知**:
+   - 外部ライブラリ不要の超軽量HTTPサーバーを内蔵（デフォルトポート: `8888`）。同一LAN内のスマートフォンや別PCのブラウザから、リアルタイムのハッシュレート、温度、ファン、電気代、最新ログを監視し、遠隔で開始/停止が可能。
+   - Discord Webhook URL を登録すれば、マイニング開始/停止やシェア承認を自動でDiscordチャンネルへ通知。
+
+5. **🔧 GPUハードウェア直接制御 (NVML / Power Limit & Fan)**:
+   - MSI Afterburner を介さず、アプリ内から直接 NVIDIA GPU の電力上限（Power Limit: Watts）およびファン回転数（%）を安全に制御。パーツの長寿命化と静音化を両立。
+
+6. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度最適化)**:
+   - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2 カーネルをJITコンパイル＆並列実行。
    - **Ping-Pong レジスタバッファ化**: カーネル内部の中間バッファを交互利用することでGPUレジスタ使用量を 66% 削減し、SM/CUあたりの並列スレッド実行密度（Occupancy）を最大化。
    - **PCIe転送の極小化 (ヘッダーキャッシュ)**: ブロック不変ヘッダーのGPU再転送を撤廃し、新Job受信時のみ更新。
    - **適応型ディスパッチ制御 (Target ~100ms)**: GPU性能に応じて1ディスパッチを約100msに自動調整し、新ブロック通知時の無駄掘り（Stale Shares）を根絶。
-   - 外部から怪しい `.exe` をダウンロードして設定する手間が一切なく、ウイルス対策ソフトの誤検知も大幅に軽減。AMD Radeon でも NVIDIA GeForce でも、アプリを起動して「採掘開始」を押すだけでネイティブGPUマイニングが即座に始まります。
 
 2. **全世代NVIDIA & AMD Radeon GPU & CPUスペック自動検知エンジン**:
    - `NVML (NVIDIA Management Library)` および Windows WMI/CIM システム問い合わせにより、NVIDIA GeForce（RTX 5090〜GTX 1050Ti）および **AMD Radeon（RX 7900 XTX〜RX 470、Vegaシリーズ）** の型番、アーキテクチャ（Blackwell / Ada / Ampere / Turing / Pascal / RDNA 3 / RDNA 2 / RDNA 1 / Vega / Polaris）、VRAM、BIOS定格TDP、およびCPU物理/論理スレッド数をリアルタイム検出。
@@ -180,7 +197,7 @@ PyInstaller により、必要なDLL・アプリアイコン・設定ファイ�
 python diagnose.py
 ```
 
-### 診断内容 (7ステップ全自動)
+### 診断内容 (8ステップ全自動)
 1. **Python 実行環境チェック** (3.9以上、OS互換性)
 2. **GUI ライブラリ (PySide6 / Qt6) チェック**
 3. **ハードウェア検知 (NVML & CPU)** (RTX 5080、VRAM、CPU物理/論理コア数、温度、CPU使用率)
@@ -188,10 +205,29 @@ python diagnose.py
 5. **マイニングプール導通テスト (TCP Handshake)** (VIPPOOL port 8888 への疎通)
 6. **マイナー制御 & シミュレーション動作チェック** (ハイブリッド & ソロマイニングサイクル)
 7. **独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック** (GPU直結演算パイプライン)
+8. **v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック**
 
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v2.0.0 (2026-09-25) - メジャーアップデート
+* **🤖 スマート・アイドル自動採掘 (Idle Auto-Mining)**:
+  * Windows API (`user32.dll` の `GetLastInputInfo`) を ctypes で直接バインド。
+  * ユーザーの操作（キーボード・マウス）が途切れたら、指定分間（例: 5分）放置で自動的にマイニングを開始。操作再開時は瞬時に一時停止または待機状態へ移行。作業やゲームの妨げにならず、メインPCの空き時間をフル活用。
+* **💰 リアルタイム電気代・電力効率 (W/MH)・推定収益計算機**:
+  * GPU消費電力（W）× 電気料金単価（円/kWh）から「1時間 / 24時間 / 月間」の電気代をリアルタイム算出。
+  * 現在のハッシュレートから推定MONA日収および純利益（利益 - 電気代）をリアルタイム表示。
+* **🚀 Multi-GPU（複数GPU同時並列採掘）サポート**:
+  * 検出されたすべてのOpenCL GPU（NVIDIA / AMD 混載可）をGUIから選択し、重複のないNonce空間を並行探索する並列ディスパッチエンジンを実装。
+* **🌐 スマホ対応 内蔵Web監視ダッシュボード**:
+  * 外部フレームワークゼロ（Python標準 `http.server`）の超軽量Webサーバーを内蔵（デフォルトポート: `8888`）。
+  * 同一ネットワーク内のスマートフォン等のブラウザから、リアルタイムハッシュレート、各GPU温度、ファン、電力、電気代、最新ログを快適に閲覧・遠隔停止/開始が可能。
+* **🔔 Discord Webhook リアルタイム通知**:
+  * 採掘開始・停止・有効シェア承認をDiscordチャンネルへ自動通知する非同期Webhookクライアントを搭載。
+* **🔧 GPUハードウェア直接制御 (NVML Power Limit & Fan Control)**:
+  * ctypes 経由で `nvml.dll` と直接対話し、MSI Afterburner等の外部ツールを使わずにGUI上からGPU電力上限（Power Limit: Watts）およびファン回転数（%）をダイレクト制御。
+* **配信用ポータブル版 (v2.0.0)** のビルドと自己診断ツール（`diagnose.py` 全8ステップ）の統合。
 
 ### v1.5.1 (2026-09-25)
 * **⚡ 独自内蔵 OpenCL マイナーエンジンの徹底効率化 (Performance Optimization)**:
@@ -289,19 +325,25 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v1.5.1.zip # 配布用ZIPアーカイブ
+│   └── MonaMinerRTX_Portable_v2.0.0.zip # 配布用ZIPアーカイブ (約 46.4MB)
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/WMI/CPU ハードウェア検知 & 推奨エンジン
     ├── miner_controller.py # マイナー制御マネージャー
-    ├── miner/              # ⚡ 独自内蔵 OpenCL マイナーエンジン
+    ├── services/           # 🤖 v2.0.0 スマート運用・省エネ・遠隔監視サービス
+    │   ├── idle_tracker.py   # Windows API アイドル検知・スマート自動採掘
+    │   ├── profit_calc.py    # 電気代・電力効率(W/MH)・純利益リアルタイム計算機
+    │   ├── notifier.py       # Discord Webhook 非同期通知サービス
+    │   ├── gpu_control.py    # ctypes NVML 直接制御 (電力リミット/ファン)
+    │   └── web_server.py     # スマホ対応 内蔵超軽量Webダッシュボード
+    ├── miner/              # ⚡ 独自内蔵 OpenCL マイナーエンジン (Multi-GPU対応)
     │   ├── opencl_backend.py # Windows OpenCL.dll ctypes 低レベルバインディング
-    │   ├── opencl_miner.py   # GPUマイニングワーカー (QThread)
+    │   ├── opencl_miner.py   # Multi-GPU 並列マイニングワーカー (QThread)
     │   ├── stratum_client.py # 純Python Stratum v1 プロトコルクライアント
     │   └── kernels/
-    │       └── lyra2v2.cl    # Lyra2REv2 JIT OpenCL C カーネル
+    │       └── lyra2v2.cl    # Lyra2REv2 JIT OpenCL C カーネル (Ping-Pong 最適化)
     └── ui/
-        ├── main_window.py  # メインウィンドウ
+        ├── main_window.py  # メインウィンドウ (高DPI/全タブ統合)
         ├── components.py   # メトリックカード・モードカード
         └── styles.py       # ダークテーマスタイルシート (QSS)
 ```

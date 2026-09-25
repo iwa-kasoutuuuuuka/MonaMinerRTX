@@ -295,7 +295,8 @@ class MinerController(QObject):
                      solo_host: str = "127.0.0.1", solo_port: int = 9402,
                      solo_user: str = "", solo_pass: str = "",
                      cpu_threads: int = 16,
-                     custom_path: str = "", use_sim: bool = True):
+                     custom_path: str = "", use_sim: bool = True,
+                     selected_gpu_indices: list = None):
         if self.is_mining:
             return
 
@@ -354,7 +355,8 @@ class MinerController(QObject):
                 solo_user=solo_user,
                 solo_pass=solo_pass,
                 cpu_threads=cpu_threads,
-                hardware_mgr=self.hardware_mgr
+                hardware_mgr=self.hardware_mgr,
+                selected_gpu_indices=selected_gpu_indices or [0]
             )
             self.worker.hashrate_update.connect(self.hashrate_changed)
             self.worker.shares_update.connect(self.shares_changed)

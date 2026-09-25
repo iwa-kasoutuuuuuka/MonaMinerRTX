@@ -137,9 +137,32 @@ def run_diagnostics():
     except Exception as e:
         print(f"  - OpenCL チェック失敗 (警告): {e}")
 
+    print("\n[8/8] v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック...")
+    try:
+        from app.services import ProfitCalculator, GpuHardwareController, IdleTracker, WebMonitoringServer
+        pc = ProfitCalculator()
+        p_res = pc.calculate(150.0, 220.0)
+        assert p_res["daily_cost_yen"] > 0
+
+        gc = GpuHardwareController()
+        print(f"  - NVML ハードウェア制御: {'利用可能 (RTX制御対応)' if gc.is_available else '非対応環境'}")
+
+        it = IdleTracker()
+        idle_s = it.get_idle_seconds()
+        print(f"  - Windows アイドル検知: 正常 (現在 {idle_s:.1f}秒 放置)")
+
+        ws = WebMonitoringServer(port=8895)
+        ws.start(get_status_fn=lambda: {"test": True}, start_fn=lambda: None, stop_fn=lambda: None)
+        time.sleep(0.2)
+        ws.stop()
+        print("  - 内蔵 Web 監視ダッシュボード HTTP サーバー: 起動・停止確認 OK")
+        print("  -> OK (全スマート運用・省エネ・遠隔監視サービス正常)")
+    except Exception as e:
+        print(f"  -> ERROR in v2.0.0 services: {e}")
+
     hw.shutdown()
     print("\n" + "=" * 60)
-    print("  すべての診断テストが正常に完了しました！[READY]")
+    print("  すべての診断テストが正常に完了しました！[READY v2.0.0]")
     print("=" * 60)
 
 if __name__ == "__main__":

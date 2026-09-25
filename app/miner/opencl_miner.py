@@ -23,7 +23,7 @@ class OpenCLMinerWorker(QThread):
     def __init__(self, mode: str, target_type: str, device_target: str,
                  pool_url: str, wallet: str, worker: str,
                  solo_host: str, solo_port: int, solo_user: str, solo_pass: str,
-                 cpu_threads: int, hardware_mgr):
+                 cpu_threads: int, hardware_mgr, selected_gpu_indices: list = None):
         super().__init__()
         self.mode = mode
         self.target_type = target_type
@@ -37,38 +37,32 @@ class OpenCLMinerWorker(QThread):
         self.solo_pass = solo_pass
         self.cpu_threads = cpu_threads
         self.hardware_mgr = hardware_mgr
+        self.selected_gpu_indices = selected_gpu_indices or [0]
 
         self._running = True
         self.accepted_shares = 0
         self.rejected_shares = 0
         self.stratum: StratumClient = None
-        self.ctx: OpenCLContext = None
+        self.ctx_list = [] # List of (OpenCLContext, kernel, dev_info, buffers, base_nonce, batch_size)
 
     def run(self):
-        self.log_message.emit("★ 独自内蔵 OpenCL マイナーエンジン起動 (Lyra2REv2)", "info")
+        self.log_message.emit("★ 独自内蔵 OpenCL マイナーエンジン起動 (Lyra2REv2 Multi-GPU)", "info")
         self.log_message.emit(f"ターゲット: [{'ソロ (Solo RPC)' if self.target_type == 'solo' else 'プール (Stratum)'}]", "info")
 
-        # 1. Setup OpenCL Device
+        # 1. Discover all GPUs
         try:
-            platforms = OpenCLBackend.get_platforms()
-            if not platforms:
-                self.log_message.emit("OpenCL プラットフォームが見つかりません。", "error")
-                return
-
-            p = platforms[0]
-            devices = OpenCLBackend.get_devices(p["id"])
-            if not devices:
+            all_devices = OpenCLBackend.get_all_gpu_devices()
+            if not all_devices:
                 self.log_message.emit("利用可能な OpenCL GPU が見つかりません。", "error")
                 return
 
-            d = devices[0]
-            self.log_message.emit(f"OpenCL デバイスバインド: {d['name']} ({p['name']})", "success")
-            self.log_message.emit(f"  - Compute Units: {d['compute_units']} / VRAM: {d['global_mem_gb']} GB", "info")
+            target_devs = [d for d in all_devices if d["global_index"] in self.selected_gpu_indices]
+            if not target_devs:
+                target_devs = [all_devices[0]]
 
-            self.ctx = OpenCLContext(p["id"], d["id"])
+            self.log_message.emit(f"採掘稼働 GPU 台数: {len(target_devs)} 台", "success")
 
-            # 2. Compile Lyra2REv2 Kernel
-            self.log_message.emit("Lyra2REv2 OpenCL C カーネルを JIT コンパイル中...", "info")
+            # 2. Kernel source
             if getattr(sys, 'frozen', False):
                 base_dir = os.path.dirname(sys.executable)
                 kernel_path = os.path.join(base_dir, "app", "miner", "kernels", "lyra2v2.cl")
@@ -78,15 +72,46 @@ class OpenCLMinerWorker(QThread):
                 kernel_path = os.path.join(os.path.dirname(__file__), "kernels", "lyra2v2.cl")
 
             with open(kernel_path, "r", encoding="utf-8") as f:
-                src = f.read()
+                kernel_src = f.read()
 
-            # Compile with OpenCL performance optimizations (-cl-mad-enable -cl-no-signed-zeros)
-            self.ctx.build_program(src, options="-cl-mad-enable -cl-no-signed-zeros")
-            kernel = self.ctx.get_kernel("search_lyra2v2")
-            self.log_message.emit("✓ JIT コンパイル成功！ (GPU演算・MAD最適化パイプライン準備完了)", "success")
+            # 3. Setup context for each GPU
+            recs = self.hardware_mgr.get_mode_recommendation()
+            mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
+            intensity = mode_data.get("intensity", 20)
+
+            for idx, d in enumerate(target_devs):
+                self.log_message.emit(f"GPU #{d['global_index']} 初期化: {d['name']} ({d['platform_name']})", "info")
+                ctx = OpenCLContext(d["platform_id"], d["id"])
+                ctx.build_program(kernel_src, options="-cl-mad-enable -cl-no-signed-zeros")
+                kernel = ctx.get_kernel("search_lyra2v2")
+
+                local_wg = min(256, d.get("max_work_group_size", 256))
+                init_batch = max(local_wg * 16, 1 << min(20, max(16, intensity)))
+
+                buf_header = ctx.create_buffer(19 * 4)
+                buf_found_nonce = ctx.create_buffer(4)
+                buf_found_count = ctx.create_buffer(4)
+
+                # Assign separated base nonce partition for each GPU
+                # E.g., GPU 0 starts at 0, GPU 1 at 0x40000000, GPU 2 at 0x80000000...
+                base_nonce = (idx * 0x40000000) & 0xFFFFFFFF
+
+                self.ctx_list.append({
+                    "ctx": ctx,
+                    "kernel": kernel,
+                    "dev": d,
+                    "local_wg": local_wg,
+                    "batch_size": init_batch,
+                    "buf_header": buf_header,
+                    "buf_found_nonce": buf_found_nonce,
+                    "buf_found_count": buf_found_count,
+                    "base_nonce": base_nonce,
+                    "last_job_key": None
+                })
+            self.log_message.emit("✓ 全GPU JIT コンパイル＆バッファ初期化完了！", "success")
 
         except Exception as e:
-            self.log_message.emit(f"OpenCL 初期化失敗: {e}", "error")
+            self.log_message.emit(f"OpenCL Multi-GPU 初期化失敗: {e}", "error")
             return
 
         # 3. Setup Stratum Client
@@ -127,16 +152,8 @@ class OpenCLMinerWorker(QThread):
             "info"
         )
 
-        # Buffers
-        buf_header = self.ctx.create_buffer(19 * 4)
-        buf_found_nonce = self.ctx.create_buffer(4)
-        buf_found_count = self.ctx.create_buffer(4)
-
-        base_nonce = 0
         total_hashes_window = 0
         t_start_window = time.perf_counter()
-
-        last_loaded_header_key = None
 
         while self._running:
             # Check current job
@@ -152,68 +169,76 @@ class OpenCLMinerWorker(QThread):
             if target_high == 0:
                 target_high = 0x0000FFFF
 
-            # Build 76-byte header only when job or extranonce2 changes
-            if current_job:
-                en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}"
-                job_key = (current_job.job_id, en2_hex, current_job.ntime)
-                if job_key != last_loaded_header_key:
-                    header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+            en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}" if current_job else "0000"
+            job_key = (current_job.job_id, en2_hex, current_job.ntime) if current_job else "solo_dummy"
+
+            for item in self.ctx_list:
+                ctx = item["ctx"]
+                kernel = item["kernel"]
+                local_wg = item["local_wg"]
+                batch_size = item["batch_size"]
+                buf_header = item["buf_header"]
+                buf_found_nonce = item["buf_found_nonce"]
+                buf_found_count = item["buf_found_count"]
+
+                # Build 76-byte header only when job or extranonce2 changes
+                if job_key != item["last_job_key"]:
+                    if current_job:
+                        header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+                    else:
+                        header_76 = b"\x00" * 76
                     c_header = (c_uint * 19).from_buffer_copy(header_76)
-                    self.ctx.write_buffer(buf_header, c_header, 19 * 4)
-                    last_loaded_header_key = job_key
-                    base_nonce = 0 # Reset nonce range for new block template
-            else:
-                en2_hex = "0000"
-                if last_loaded_header_key != "solo_dummy":
-                    header_76 = b"\x00" * 76
-                    c_header = (c_uint * 19).from_buffer_copy(header_76)
-                    self.ctx.write_buffer(buf_header, c_header, 19 * 4)
-                    last_loaded_header_key = "solo_dummy"
+                    ctx.write_buffer(buf_header, c_header, 19 * 4)
+                    item["last_job_key"] = job_key
+                    # Reset base_nonce
+                    item["base_nonce"] = (item["dev"]["global_index"] * 0x40000000) & 0xFFFFFFFF
 
-            # Clear found count (4 bytes)
-            c_zero = (c_uint * 1)(0)
-            self.ctx.write_buffer(buf_found_count, c_zero, 4)
+                # Clear found count (4 bytes)
+                c_zero = (c_uint * 1)(0)
+                ctx.write_buffer(buf_found_count, c_zero, 4)
 
-            # Set kernel arguments
-            self.ctx.set_arg_mem(kernel, 0, buf_header)
-            self.ctx.set_arg_uint(kernel, 1, base_nonce)
-            self.ctx.set_arg_uint(kernel, 2, target_high)
-            self.ctx.set_arg_mem(kernel, 3, buf_found_nonce)
-            self.ctx.set_arg_mem(kernel, 4, buf_found_count)
+                # Set kernel arguments
+                ctx.set_arg_mem(kernel, 0, buf_header)
+                ctx.set_arg_uint(kernel, 1, item["base_nonce"])
+                ctx.set_arg_uint(kernel, 2, target_high)
+                ctx.set_arg_mem(kernel, 3, buf_found_nonce)
+                ctx.set_arg_mem(kernel, 4, buf_found_count)
 
-            # Measure dispatch duration to dynamically adapt batch size towards ~100ms
-            t_disp_start = time.perf_counter()
-            self.ctx.run_kernel_1d(kernel, batch_size, local_wg)
-            self.ctx.finish()
-            disp_elapsed = time.perf_counter() - t_disp_start
+                # Measure dispatch duration to dynamically adapt batch size towards ~100ms
+                t_disp_start = time.perf_counter()
+                ctx.run_kernel_1d(kernel, batch_size, local_wg)
+                ctx.finish()
+                disp_elapsed = time.perf_counter() - t_disp_start
 
-            # Check if any nonce met target
-            c_count = (c_uint * 1)(0)
-            self.ctx.read_buffer(buf_found_count, c_count, 4)
-            if c_count[0] > 0:
-                c_res_nonce = (c_uint * 1)(0)
-                self.ctx.read_buffer(buf_found_nonce, c_res_nonce, 4)
-                found_nonce = c_res_nonce[0]
-                self.log_message.emit(f"★ 有効な Nonce を発見！: 0x{found_nonce:08x}", "success")
-
-                if self.stratum and current_job:
-                    self.stratum.submit_share(
-                        job_id=current_job.job_id,
-                        extranonce2=en2_hex,
-                        ntime=current_job.ntime,
-                        nonce_uint=found_nonce,
-                        callback=self._on_share_response
+                # Check if any nonce met target
+                c_count = (c_uint * 1)(0)
+                ctx.read_buffer(buf_found_count, c_count, 4)
+                if c_count[0] > 0:
+                    c_res_nonce = (c_uint * 1)(0)
+                    ctx.read_buffer(buf_found_nonce, c_res_nonce, 4)
+                    found_nonce = c_res_nonce[0]
+                    self.log_message.emit(
+                        f"★ GPU #{item['dev']['global_index']} 有効な Nonce 発見！: 0x{found_nonce:08x}",
+                        "success"
                     )
 
-            base_nonce = (base_nonce + batch_size) & 0xFFFFFFFF
-            total_hashes_window += batch_size
+                    if self.stratum and current_job:
+                        self.stratum.submit_share(
+                            job_id=current_job.job_id,
+                            extranonce2=en2_hex,
+                            ntime=current_job.ntime,
+                            nonce_uint=found_nonce,
+                            callback=self._on_share_response
+                        )
 
-            # Adaptive batch tuning (Target ~80-120ms to eliminate stale shares)
-            if disp_elapsed > 0.001:
-                ideal_batch = int(batch_size * (0.10 / disp_elapsed))
-                # Smooth update
-                batch_size = max(local_wg * 16, min(4194304, int(batch_size * 0.7 + ideal_batch * 0.3)))
-                batch_size = (batch_size // local_wg) * local_wg # Ensure WG alignment
+                item["base_nonce"] = (item["base_nonce"] + batch_size) & 0xFFFFFFFF
+                total_hashes_window += batch_size
+
+                # Adaptive batch tuning (Target ~80-120ms to eliminate stale shares)
+                if disp_elapsed > 0.001:
+                    ideal_batch = int(batch_size * (0.10 / disp_elapsed))
+                    batch_size = max(local_wg * 16, min(4194304, int(batch_size * 0.7 + ideal_batch * 0.3)))
+                    item["batch_size"] = (batch_size // local_wg) * local_wg
 
             # Periodic telemetry update (every ~1 sec)
             now = time.perf_counter()
@@ -223,7 +248,7 @@ class OpenCLMinerWorker(QThread):
                 metrics = self.hardware_mgr.get_live_metrics()
                 pwr = metrics.get("power_w", 0.0)
                 if pwr <= 0:
-                    pwr = mode_data.get("target_pwr_w", 200.0)
+                    pwr = mode_data.get("target_pwr_w", 200.0) * max(1, len(self.ctx_list))
                 eff = mhs / pwr if pwr > 0 else 0.0
                 self.hashrate_update.emit(mhs, pwr, eff)
 
@@ -234,9 +259,12 @@ class OpenCLMinerWorker(QThread):
         if self.stratum:
             self.stratum.close()
             self.stratum = None
-        if self.ctx:
-            self.ctx.release()
-            self.ctx = None
+        for item in self.ctx_list:
+            try:
+                item["ctx"].release()
+            except Exception:
+                pass
+        self.ctx_list.clear()
 
     def _on_new_stratum_job(self, job: StratumJob, target: int):
         self.log_message.emit(f"新ジョブ受信: Job ID #{job.job_id} (Clean: {job.clean_jobs})", "info")

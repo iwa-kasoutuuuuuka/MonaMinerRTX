@@ -7,12 +7,12 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v1.5.1.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v2.0.0.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
 
 def build():
     print("=" * 60)
-    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v1.5.0")
+    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.0.0")
     print("=" * 60)
 
     # 1. Clean previous build
@@ -24,7 +24,7 @@ def build():
             print(f"  警告: 一部ファイルを削除できませんでした: {e}")
 
     # 2. Run PyInstaller
-    print("\n[2/5] PyInstaller によるコンパイル実行中 (PySide6 + NVML + 内蔵OpenCL 同梱)...")
+    print("\n[2/5] PyInstaller によるコンパイル実行中 (PySide6 + NVML + 内蔵OpenCL + v2サービス 同梱)...")
     kernel_src = os.path.join(PROJECT_DIR, "app", "miner", "kernels", "lyra2v2.cl")
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -44,6 +44,12 @@ def build():
         "--hidden-import=app.miner.opencl_backend",
         "--hidden-import=app.miner.opencl_miner",
         "--hidden-import=app.miner.stratum_client",
+        "--hidden-import=app.services",
+        "--hidden-import=app.services.idle_tracker",
+        "--hidden-import=app.services.profit_calc",
+        "--hidden-import=app.services.notifier",
+        "--hidden-import=app.services.gpu_control",
+        "--hidden-import=app.services.web_server",
         f"--add-data={kernel_src};app/miner/kernels",
         "--distpath", DIST_DIR,
         "--workpath", os.path.join(PROJECT_DIR, "build"),
