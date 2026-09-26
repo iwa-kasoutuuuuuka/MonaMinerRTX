@@ -123,7 +123,7 @@ class StratumClient:
             self._send({
                 "id": self._next_id(),
                 "method": "mining.subscribe",
-                "params": ["MonaMinerNative/1.4.0"]
+                "params": ["MonaMinerNative/2.1.0"]
             })
             return True
         except Exception as e:

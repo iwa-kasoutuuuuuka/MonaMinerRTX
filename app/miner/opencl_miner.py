@@ -22,8 +22,9 @@ class OpenCLMinerWorker(QThread):
 
     def __init__(self, mode: str, target_type: str, device_target: str,
                  pool_url: str, wallet: str, worker: str,
-                 solo_host: str, solo_port: int, solo_user: str, solo_pass: str,
-                 cpu_threads: int, hardware_mgr, selected_gpu_indices: list = None,
+                 solo_host: str = "127.0.0.1", solo_port: int = 9402,
+                 solo_user: str = "", solo_pass: str = "",
+                 cpu_threads: int = 16, hardware_mgr=None, selected_gpu_indices: list = None,
                  pool_password: str = "x"):
         super().__init__()
         self.mode = mode
@@ -149,19 +150,23 @@ class OpenCLMinerWorker(QThread):
             connected = self.stratum.connect()
             if not connected:
                 self.log_message.emit("プールへの接続に失敗しました。", "error")
-                self.ctx.release()
+                for item in self.ctx_list:
+                    try:
+                        item["ctx"].release()
+                    except Exception:
+                        pass
+                self.ctx_list.clear()
                 return
 
         # 4. Intensity & Adaptive Workgroup settings
         recs = self.hardware_mgr.get_mode_recommendation()
         mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
         intensity = mode_data.get("intensity", 20)
-        local_wg = min(128, d.get("max_work_group_size", 128))
-        # Initial batch size (65K to 1M)
-        batch_size = max(local_wg * 16, 1 << min(20, max(16, intensity)))
+        first_wg = self.ctx_list[0]["local_wg"] if self.ctx_list else 128
+        first_batch = self.ctx_list[0]["batch_size"] if self.ctx_list else 1048576
 
         self.log_message.emit(
-            f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {batch_size:,} / WG: {local_wg} / 適応型ディスパッチ有効)",
+            f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {first_batch:,} / WG: {first_wg} / 適応型ディスパッチ有効)",
             "info"
         )
 
