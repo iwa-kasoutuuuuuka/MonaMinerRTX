@@ -81,10 +81,10 @@ class MainWindow(QMainWindow):
         content_widget.setObjectName("content_widget")
         main_layout = QVBoxLayout(content_widget)
         main_layout.setContentsMargins(14, 10, 14, 10)
-        main_layout.setSpacing(8)
+        main_layout.setSpacing(10)
         scroll_area.setWidget(content_widget)
 
-        # 1. Top Header Banner
+        # 1. Top Header Banner (Persistent across all tabs)
         banner = QFrame()
         banner.setObjectName("banner")
         banner_layout = QHBoxLayout(banner)
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX / RX v1.5.1 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v2.1.0 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
         banner_layout.addLayout(badge_layout)
         main_layout.addWidget(banner)
 
-        # 2. Hardware Live Status Bar (Metric Cards)
+        # 2. Hardware Live Status Bar (Metric Cards - Persistent across all tabs)
         status_bar = QHBoxLayout()
         status_bar.setSpacing(8)
         self.card_hashrate = MetricCard("ハッシュレート", "0.0", "MH/s")
@@ -171,11 +171,53 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.card_shares)
         main_layout.addLayout(status_bar)
 
-        # 3. Middle Section: Device Selection & Profile Selection
-        middle_layout = QHBoxLayout()
-        middle_layout.setSpacing(10)
+        # 3. Main Navigation Tab Widget (2-Tier UX)
+        self.tabs_main = QTabWidget()
+        self.tabs_main.setObjectName("tabs_main")
 
-        # 3A. Device Selection Card
+        # =========================================================================
+        # TAB 1: 🏠 かんたん採掘 (ダッシュボード)
+        # =========================================================================
+        tab_dashboard = QWidget()
+        dash_layout = QVBoxLayout(tab_dashboard)
+        dash_layout.setContentsMargins(6, 8, 6, 8)
+        dash_layout.setSpacing(10)
+
+        # 1-A. Wallet Address Card (最重要: 目立つ位置に配置)
+        addr_card = QFrame()
+        addr_card.setObjectName("card")
+        addr_layout = QVBoxLayout(addr_card)
+        addr_layout.setContentsMargins(12, 10, 12, 10)
+        addr_layout.setSpacing(6)
+
+        lbl_addr_title = QLabel("🪙 モナコイン受取アドレス (Coinbase Wallet)")
+        lbl_addr_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #fbbf24;")
+        addr_layout.addWidget(lbl_addr_title)
+
+        addr_row = QHBoxLayout()
+        addr_row.setSpacing(8)
+        self.edit_address = QLineEdit(self.config_mgr.get("wallet_address", ""))
+        self.edit_address.setPlaceholderText("例: M... または mona1... (報酬受取用アドレス)")
+        self.edit_address.setStyleSheet("font-size: 13px; font-weight: bold; padding: 8px 12px; background-color: #0f172a; border: 1px solid #475569; border-radius: 6px;")
+        self.edit_address.textChanged.connect(self._validate_address_input)
+        addr_row.addWidget(self.edit_address, stretch=4)
+
+        self.lbl_addr_status = QLabel("")
+        self.lbl_addr_status.setStyleSheet("font-size: 11px;")
+        addr_row.addWidget(self.lbl_addr_status, stretch=1)
+        addr_layout.addLayout(addr_row)
+
+        lbl_addr_hint = QLabel("💡 初めての方: ご自身のモナコイン受取アドレスを入力するだけで、すぐにマイニングを開始できます。")
+        lbl_addr_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        addr_layout.addWidget(lbl_addr_hint)
+
+        dash_layout.addWidget(addr_card)
+
+        # 1-B. Device & Optimization Profile (左右並列カード)
+        mid_row = QHBoxLayout()
+        mid_row.setSpacing(10)
+
+        # Left: Device Selection Card
         device_card = QFrame()
         device_card.setObjectName("card")
         dev_layout = QVBoxLayout(device_card)
@@ -189,10 +231,10 @@ class MainWindow(QMainWindow):
         dev_btn_layout = QHBoxLayout()
         has_gpu = self.hw_mgr.has_gpu or (self.hw_mgr.has_nvml and self.hw_mgr.device_count > 0)
         gpu_badge = "🔴" if hw_info.get("is_amd", False) else "⚡"
-        gpu_label = f"{gpu_badge} GPU のみ ({hw_info['short_name']})" if has_gpu else "⚡ GPU (未検出)"
+        gpu_label = f"{gpu_badge} GPU ({hw_info['short_name']})" if has_gpu else "⚡ GPU (未検出)"
         self.btn_dev_gpu = QRadioButton(gpu_label)
-        self.btn_dev_cpu = QRadioButton("🧠 CPU のみ")
-        self.btn_dev_hybrid = QRadioButton("🚀 ハイブリッド (GPU+CPU)")
+        self.btn_dev_cpu = QRadioButton("🧠 CPU")
+        self.btn_dev_hybrid = QRadioButton("🚀 ハイブリッド")
 
         if not has_gpu:
             self.btn_dev_gpu.setEnabled(False)
@@ -234,11 +276,11 @@ class MainWindow(QMainWindow):
         cpu_ctrl_layout.addStretch()
         dev_layout.addLayout(cpu_ctrl_layout)
 
-        # CPU Quick Preset Buttons
+        # CPU Presets
         rec_info = self.hw_mgr.get_mode_recommendation()
         btn_preset_layout = QHBoxLayout()
         btn_preset_layout.setSpacing(6)
-        
+
         btn_cpu_eco = QPushButton(f"🍃 物理コア ({rec_info['modes']['eco']['cpu_threads']}T)")
         btn_cpu_eco.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; border-radius: 4px; padding: 3px 6px; font-size: 11px; color: #cbd5e1;")
         btn_cpu_eco.setCursor(Qt.PointingHandCursor)
@@ -260,17 +302,16 @@ class MainWindow(QMainWindow):
         btn_preset_layout.addStretch()
         dev_layout.addLayout(btn_preset_layout)
 
-        middle_layout.addWidget(device_card, stretch=2)
+        mid_row.addWidget(device_card, stretch=2)
 
-        # 3B. Mode Profiles
-        rec_info = self.hw_mgr.get_mode_recommendation()
+        # Right: GPU Profile Selection Card
         mode_box = QFrame()
         mode_box.setObjectName("card")
         mode_box_layout = QVBoxLayout(mode_box)
         mode_box_layout.setContentsMargins(10, 8, 10, 8)
         mode_box_layout.setSpacing(6)
 
-        lbl_profile_title = QLabel("⚙️ GPU動作プロファイル")
+        lbl_profile_title = QLabel("⚙️ 動作プロファイル (ワンクリック自動最適化)")
         lbl_profile_title.setStyleSheet("font-weight: bold; color: #94a3b8; font-size: 12px;")
         mode_box_layout.addWidget(lbl_profile_title)
 
@@ -285,8 +326,8 @@ class MainWindow(QMainWindow):
             mode_btn_row.addWidget(card)
         mode_box_layout.addLayout(mode_btn_row)
 
-        middle_layout.addWidget(mode_box, stretch=3)
-        main_layout.addLayout(middle_layout)
+        mid_row.addWidget(mode_box, stretch=3)
+        dash_layout.addLayout(mid_row)
 
         # Highlight initially selected mode
         active_key = self.current_mode
@@ -294,15 +335,73 @@ class MainWindow(QMainWindow):
             active_key = rec_info["recommended_key"]
         self._highlight_mode(active_key)
 
-        # 4. Mining Target Settings (Tabs for Pool vs Solo)
+        # 1-C. Action Card: Current Destination Summary + Big Start/Stop Button
+        action_card = QFrame()
+        action_card.setObjectName("card")
+        action_layout = QVBoxLayout(action_card)
+        action_layout.setContentsMargins(12, 10, 12, 10)
+        action_layout.setSpacing(8)
+
+        dest_row = QHBoxLayout()
+        self.lbl_current_target_summary = QLabel("")
+        self.lbl_current_target_summary.setObjectName("summary_badge")
+        self.lbl_current_target_summary.setWordWrap(True)
+        dest_row.addWidget(self.lbl_current_target_summary, stretch=1)
+
+        btn_go_settings = QPushButton("⚙️ 接続先・詳細を変更...")
+        btn_go_settings.setStyleSheet("background-color: #334155; color: #93c5fd; border-radius: 4px; padding: 5px 12px; font-size: 11px; font-weight: bold;")
+        btn_go_settings.setCursor(Qt.PointingHandCursor)
+        btn_go_settings.clicked.connect(lambda: self.tabs_main.setCurrentIndex(1))
+        dest_row.addWidget(btn_go_settings)
+        action_layout.addLayout(dest_row)
+
+        self.btn_toggle_mining = QPushButton("🚀 採掘開始 (Start Mining)")
+        self.btn_toggle_mining.setObjectName("start_btn")
+        self.btn_toggle_mining.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_mining.clicked.connect(self._toggle_mining)
+        action_layout.addWidget(self.btn_toggle_mining)
+
+        dash_layout.addWidget(action_card)
+
+        # 1-D. Live Console
+        lbl_console_title = QLabel("📋 リアルタイム動作ログ")
+        lbl_console_title.setStyleSheet("font-weight: bold; color: #94a3b8; font-size: 12px; margin-top: 4px;")
+        dash_layout.addWidget(lbl_console_title)
+        self.console = LogConsole()
+        dash_layout.addWidget(self.console)
+
+        self.tabs_main.addTab(tab_dashboard, "🏠 かんたん採掘 (ダッシュボード)")
+
+        # =========================================================================
+        # TAB 2: ⚙️ 詳細設定・高度なツール
+        # =========================================================================
+        tab_advanced = QWidget()
+        adv_layout = QVBoxLayout(tab_advanced)
+        adv_layout.setContentsMargins(6, 8, 6, 8)
+        adv_layout.setSpacing(10)
+
+        lbl_adv_desc = QLabel("⚙️ プール接続、ソロマイニング、スマートアイドル、収益性計算、遠隔監視、GPU制御の詳細設定です。")
+        lbl_adv_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        adv_layout.addWidget(lbl_adv_desc)
+
+        self.tabs_settings = QTabWidget()
+        self.tabs_settings.setObjectName("tabs_settings")
+
+        # Sub-tab 1: 🏊 プール・ソロ接続
+        tab_conn = QWidget()
+        conn_layout = QVBoxLayout(tab_conn)
+        conn_layout.setContentsMargins(8, 8, 8, 8)
+        conn_layout.setSpacing(10)
+
+        # Internal target tabs (Pool vs Solo)
         self.tabs_target = QTabWidget()
         self.tabs_target.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #334155; border-radius: 8px; background-color: #1a202c; padding: 10px; }
-            QTabBar::tab { background: #0f172a; color: #94a3b8; padding: 8px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 4px; font-weight: bold; }
-            QTabBar::tab:selected { background: #1a202c; color: #fbbf24; border: 1px solid #334155; border-bottom: none; }
+            QTabWidget::pane { border: 1px solid #334155; border-radius: 8px; background-color: #1e293b; padding: 10px; }
+            QTabBar::tab { background: #0f172a; color: #94a3b8; padding: 6px 14px; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 4px; font-weight: bold; }
+            QTabBar::tab:selected { background: #1e293b; color: #fbbf24; border: 1px solid #334155; border-bottom: none; }
         """)
 
-        # Tab 1: Pool Mining
+        # Tab Pool
         tab_pool = QWidget()
         tab_pool_layout = QGridLayout(tab_pool)
         tab_pool_layout.setContentsMargins(8, 8, 8, 8)
@@ -320,7 +419,7 @@ class MainWindow(QMainWindow):
         tab_pool_layout.addWidget(QLabel("カスタム URL:"), 0, 2)
         self.edit_custom_pool = QLineEdit(self.config_mgr.get("custom_pool_url", ""))
         self.edit_custom_pool.setPlaceholderText("stratum+tcp://host:port (カスタム時)")
-        self.edit_custom_pool.textChanged.connect(lambda t: self.config_mgr.set("custom_pool_url", t.strip()))
+        self.edit_custom_pool.textChanged.connect(self._on_custom_pool_changed)
         self.edit_custom_pool.setEnabled(self.combo_pool.currentIndex() == 2)
         tab_pool_layout.addWidget(self.edit_custom_pool, 0, 3)
 
@@ -328,7 +427,7 @@ class MainWindow(QMainWindow):
         self.edit_worker = QLineEdit(self.config_mgr.get("worker_name", "rtx5080_worker"))
         self.edit_worker.setPlaceholderText("例: アカウント名.worker1 (VIPPOOL登録名)")
         self.edit_worker.setToolTip("VIPPOOL等の登録制プールでは「Web登録ユーザー名.ワーカー名」を入力してください。")
-        self.edit_worker.textChanged.connect(lambda t: self.config_mgr.set("worker_name", t.strip()))
+        self.edit_worker.textChanged.connect(self._on_worker_changed)
         tab_pool_layout.addWidget(self.edit_worker, 1, 1)
 
         tab_pool_layout.addWidget(QLabel("ワーカー パスワード:"), 1, 2)
@@ -342,7 +441,7 @@ class MainWindow(QMainWindow):
 
         self.tabs_target.addTab(tab_pool, "🏊 プールマイニング (Stratum)")
 
-        # Tab 2: Solo Mining
+        # Tab Solo
         tab_solo = QWidget()
         tab_solo_layout = QGridLayout(tab_solo)
         tab_solo_layout.setContentsMargins(8, 8, 8, 8)
@@ -378,14 +477,42 @@ class MainWindow(QMainWindow):
 
         self.tabs_target.addTab(tab_solo, "🏠 ソロマイニング (Monacoin Core RPC)")
 
-        # Tab 3: Smart Idle Auto-Mining
+        if self.config_mgr.get("mining_target", "pool") == "solo":
+            self.tabs_target.setCurrentIndex(1)
+        else:
+            self.tabs_target.setCurrentIndex(0)
+        self.tabs_target.currentChanged.connect(self._on_target_tab_changed)
+
+        conn_layout.addWidget(self.tabs_target)
+
+        # Options card (Simulator & External Miner)
+        opt_card = QFrame()
+        opt_card.setObjectName("card")
+        opt_layout = QHBoxLayout(opt_card)
+        opt_layout.setContentsMargins(10, 8, 10, 8)
+        self.chk_simulator = QCheckBox("テスト・シミュレーションモード (実採掘を行わずUI・負荷のみ検証)")
+        self.chk_simulator.setChecked(self.config_mgr.get("use_simulator", False))
+        self.chk_simulator.toggled.connect(lambda v: self.config_mgr.set("use_simulator", v))
+        opt_layout.addWidget(self.chk_simulator)
+
+        btn_browse_miner = QPushButton("オプション: 外部マイナー指定 (ccminer / wildrig 等)...")
+        btn_browse_miner.setStyleSheet("background-color: #334155; border: none; border-radius: 4px; padding: 4px 10px;")
+        btn_browse_miner.clicked.connect(self._browse_custom_miner)
+        opt_layout.addWidget(btn_browse_miner)
+        conn_layout.addWidget(opt_card)
+        conn_layout.addStretch()
+
+        self.tabs_settings.addTab(tab_conn, "🏊 接続設定 (プール/ソロ)")
+
+        # Sub-tab 2: 🤖 スマート・アイドル採掘
         tab_idle = QWidget()
         tab_idle_layout = QGridLayout(tab_idle)
-        tab_idle_layout.setContentsMargins(8, 8, 8, 8)
+        tab_idle_layout.setContentsMargins(12, 12, 12, 12)
         tab_idle_layout.setHorizontalSpacing(10)
-        tab_idle_layout.setVerticalSpacing(8)
+        tab_idle_layout.setVerticalSpacing(12)
 
         self.chk_idle_enable = QCheckBox("離席時の自動採掘を有効化 (PC操作停止で自動スタート)")
+        self.chk_idle_enable.setStyleSheet("font-size: 13px; font-weight: bold; color: #38bdf8;")
         self.chk_idle_enable.setChecked(self.config_mgr.get("idle_mining_enabled", False))
         self.chk_idle_enable.toggled.connect(self._on_idle_enable_toggled)
         tab_idle_layout.addWidget(self.chk_idle_enable, 0, 0, 1, 2)
@@ -406,14 +533,19 @@ class MainWindow(QMainWindow):
         self.lbl_idle_state.setStyleSheet("color: #38bdf8; font-weight: bold;")
         tab_idle_layout.addWidget(self.lbl_idle_state, 2, 1)
 
-        self.tabs_target.addTab(tab_idle, "🤖 スマート・アイドル採掘")
+        lbl_idle_desc = QLabel("💡 作業やゲームの邪魔をせず、離席中や就寝中だけ自動でマイニングしたい場合に最適です。\nユーザーがマウスを動かしたりキーボードを触ると、わずか0.1秒で即座に採掘を一時中断します。")
+        lbl_idle_desc.setStyleSheet("color: #94a3b8; font-size: 12px; line-height: 1.4;")
+        tab_idle_layout.addWidget(lbl_idle_desc, 3, 0, 1, 2)
+        tab_idle_layout.setRowStretch(4, 1)
 
-        # Tab 4: Electricity & Profit Calculator
+        self.tabs_settings.addTab(tab_idle, "🤖 スマート・アイドル")
+
+        # Sub-tab 3: 💰 収益性・電気代計算
         tab_profit = QWidget()
         tab_profit_layout = QGridLayout(tab_profit)
-        tab_profit_layout.setContentsMargins(8, 8, 8, 8)
+        tab_profit_layout.setContentsMargins(12, 12, 12, 12)
         tab_profit_layout.setHorizontalSpacing(10)
-        tab_profit_layout.setVerticalSpacing(8)
+        tab_profit_layout.setVerticalSpacing(12)
 
         tab_profit_layout.addWidget(QLabel("電気料金単価 (円/kWh):"), 0, 0)
         self.spin_elec_rate = QDoubleSpinBox()
@@ -431,19 +563,26 @@ class MainWindow(QMainWindow):
         tab_profit_layout.addWidget(self.spin_mona_price, 0, 3)
 
         self.lbl_profit_summary = QLabel("採掘稼働時にリアルタイムで電気代と推定純利益が計算されます。")
-        self.lbl_profit_summary.setStyleSheet("color: #a7f3d0; font-size: 12px; font-weight: bold;")
+        self.lbl_profit_summary.setStyleSheet("color: #a7f3d0; font-size: 13px; font-weight: bold; background-color: #064e3b; border: 1px solid #059669; border-radius: 6px; padding: 10px;")
+        self.lbl_profit_summary.setWordWrap(True)
         tab_profit_layout.addWidget(self.lbl_profit_summary, 1, 0, 1, 4)
 
-        self.tabs_target.addTab(tab_profit, "💰 電気代・収益性計算")
+        lbl_profit_desc = QLabel("💡 ご契約の電力会社（東京電力、関西電力等）の従量料金単価を入力することで、画面上部の「推定電気代」および損益シミュレーションが正確になります。")
+        lbl_profit_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        tab_profit_layout.addWidget(lbl_profit_desc, 2, 0, 1, 4)
+        tab_profit_layout.setRowStretch(3, 1)
 
-        # Tab 5: Web Dashboard & Discord Webhook
+        self.tabs_settings.addTab(tab_profit, "💰 収益性・電気代")
+
+        # Sub-tab 4: 🌐 遠隔監視・通知
         tab_remote = QWidget()
         tab_remote_layout = QGridLayout(tab_remote)
-        tab_remote_layout.setContentsMargins(8, 8, 8, 8)
+        tab_remote_layout.setContentsMargins(12, 12, 12, 12)
         tab_remote_layout.setHorizontalSpacing(10)
-        tab_remote_layout.setVerticalSpacing(8)
+        tab_remote_layout.setVerticalSpacing(12)
 
         self.chk_web_enable = QCheckBox("スマホ対応 内蔵Webダッシュボードを起動 (LAN内ブラウザ閲覧)")
+        self.chk_web_enable.setStyleSheet("font-size: 13px; font-weight: bold; color: #38bdf8;")
         self.chk_web_enable.setChecked(self.config_mgr.get("web_dashboard_enabled", True))
         self.chk_web_enable.toggled.connect(self._on_web_server_toggled)
         tab_remote_layout.addWidget(self.chk_web_enable, 0, 0, 1, 2)
@@ -475,23 +614,27 @@ class MainWindow(QMainWindow):
         btn_test_discord.clicked.connect(self._test_discord_notification)
         tab_remote_layout.addWidget(btn_test_discord, 2, 3)
 
-        self.tabs_target.addTab(tab_remote, "🌐 遠隔監視・通知")
+        lbl_remote_desc = QLabel("💡 外出先やベッドからスマホで稼働状況・温度・ハッシュレートを確認可能。Discord Webhook を登録すると採掘開始/停止やエラー発生時に自動通知されます。")
+        lbl_remote_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        tab_remote_layout.addWidget(lbl_remote_desc, 3, 0, 1, 4)
+        tab_remote_layout.setRowStretch(4, 1)
 
-        # Tab 6: Hardware & Multi-GPU
+        self.tabs_settings.addTab(tab_remote, "🌐 遠隔監視・通知")
+
+        # Sub-tab 5: 🔧 GPUハードウェア (Multi-GPU)
         tab_hw = QWidget()
         tab_hw_layout = QGridLayout(tab_hw)
-        tab_hw_layout.setContentsMargins(8, 8, 8, 8)
+        tab_hw_layout.setContentsMargins(12, 12, 12, 12)
         tab_hw_layout.setHorizontalSpacing(10)
-        tab_hw_layout.setVerticalSpacing(8)
+        tab_hw_layout.setVerticalSpacing(10)
 
         tab_hw_layout.addWidget(QLabel("検出された OpenCL GPU デバイス (Multi-GPU 同時採掘):"), 0, 0, 1, 4)
         self.list_gpus = QListWidget()
         self.list_gpus.setStyleSheet("background-color: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #f8fafc;")
-        self.list_gpus.setFixedHeight(75)
+        self.list_gpus.setFixedHeight(85)
         self._populate_gpu_list()
         tab_hw_layout.addWidget(self.list_gpus, 1, 0, 1, 4)
 
-        # NVIDIA Hardware control row
         tab_hw_layout.addWidget(QLabel("GPU 電力リミット (W):"), 2, 0)
         self.spin_power_limit = QSpinBox()
         self.spin_power_limit.setRange(0, 800)
@@ -507,68 +650,26 @@ class MainWindow(QMainWindow):
         tab_hw_layout.addWidget(self.spin_fan_speed, 2, 3)
 
         btn_apply_hw = QPushButton("⚡ ハードウェア設定 (電力・ファン) を即時適用")
-        btn_apply_hw.setStyleSheet("background-color: #059669; color: white; border-radius: 4px; padding: 6px; font-weight: bold;")
+        btn_apply_hw.setStyleSheet("background-color: #059669; color: white; border-radius: 4px; padding: 7px; font-weight: bold;")
         btn_apply_hw.setCursor(Qt.PointingHandCursor)
         btn_apply_hw.clicked.connect(self._apply_gpu_hardware_settings)
         tab_hw_layout.addWidget(btn_apply_hw, 3, 0, 1, 4)
 
-        self.tabs_target.addTab(tab_hw, "🔧 ハードウェア制御 (Multi-GPU)")
+        lbl_hw_desc = QLabel("💡 複数GPUを搭載しているPCでは、チェックを入れたすべてのGPUで並列採掘が行われます。\n※ NVML電力リミット設定には管理者権限が必要です。")
+        lbl_hw_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        tab_hw_layout.addWidget(lbl_hw_desc, 4, 0, 1, 4)
+        tab_hw_layout.setRowStretch(5, 1)
 
-        # Set saved tab
-        if self.config_mgr.get("mining_target", "pool") == "solo":
-            self.tabs_target.setCurrentIndex(1)
-        else:
-            self.tabs_target.setCurrentIndex(0)
-        self.tabs_target.currentChanged.connect(self._on_target_tab_changed)
+        self.tabs_settings.addTab(tab_hw, "🔧 ハードウェア制御 (Multi-GPU)")
 
-        main_layout.addWidget(self.tabs_target)
+        adv_layout.addWidget(self.tabs_settings)
+        self.tabs_main.addTab(tab_advanced, "⚙️ 詳細設定・高度なツール")
 
-        # 5. Wallet Address & General Options Frame
-        config_frame = QFrame()
-        config_frame.setObjectName("card")
-        cfg_layout = QGridLayout(config_frame)
-        cfg_layout.setContentsMargins(10, 8, 10, 8)
-        cfg_layout.setHorizontalSpacing(10)
-        cfg_layout.setVerticalSpacing(6)
+        main_layout.addWidget(self.tabs_main)
 
-        cfg_layout.addWidget(QLabel("受取アドレス (Coinbase):"), 0, 0)
-        self.edit_address = QLineEdit(self.config_mgr.get("wallet_address", ""))
-        self.edit_address.setPlaceholderText("例: M... または mona1... (報酬受取用)")
-        self.edit_address.textChanged.connect(self._validate_address_input)
-        cfg_layout.addWidget(self.edit_address, 0, 1)
-
-        self.lbl_addr_status = QLabel("")
-        self.lbl_addr_status.setStyleSheet("font-size: 11px;")
-        cfg_layout.addWidget(self.lbl_addr_status, 0, 2)
-
-        # Options row
-        self.chk_simulator = QCheckBox("テスト・シミュレーションモード (実採掘を行わずUI・負荷のみ検証)")
-        self.chk_simulator.setChecked(self.config_mgr.get("use_simulator", False))
-        self.chk_simulator.toggled.connect(lambda v: self.config_mgr.set("use_simulator", v))
-        cfg_layout.addWidget(self.chk_simulator, 1, 1)
-
-        btn_browse_miner = QPushButton("オプション: 外部マイナー指定 (ccminer / wildrig 等)...")
-        btn_browse_miner.setStyleSheet("background-color: #334155; border: none; border-radius: 4px; padding: 4px 10px;")
-        btn_browse_miner.clicked.connect(self._browse_custom_miner)
-        cfg_layout.addWidget(btn_browse_miner, 1, 2)
-
-        main_layout.addWidget(config_frame)
-
-        # 6. Big Action Controls (Start / Stop Button)
-        action_layout = QHBoxLayout()
-        self.btn_toggle_mining = QPushButton("🚀 採掘開始 (Start Mining)")
-        self.btn_toggle_mining.setObjectName("start_btn")
-        self.btn_toggle_mining.setCursor(Qt.PointingHandCursor)
-        self.btn_toggle_mining.clicked.connect(self._toggle_mining)
-        action_layout.addWidget(self.btn_toggle_mining)
-        main_layout.addLayout(action_layout)
-
-        # 7. Live Console / Log View
-        self.console = LogConsole()
-        main_layout.addWidget(self.console)
-
-        # Initial validation check
+        # Initial validation & target summary
         self._validate_address_input(self.edit_address.text())
+        self._update_target_summary()
 
     def _connect_signals(self):
         self.miner_ctrl.status_changed.connect(self._on_miner_status_changed)
@@ -597,6 +698,7 @@ class MainWindow(QMainWindow):
         else:
             self.card_shares.lbl_title.setText("承認シェア数")
             self.console.append_log("マイニングターゲットを [プールマイニング (Stratum)] に設定しました。", "info")
+        self._update_target_summary()
 
     def _on_mode_selected(self, mode_key: str):
         self.current_mode = mode_key
@@ -621,6 +723,32 @@ class MainWindow(QMainWindow):
         self.config_mgr.set("pool_index", index)
         if hasattr(self, "edit_custom_pool"):
             self.edit_custom_pool.setEnabled(index == 2)
+        self._update_target_summary()
+
+    def _on_custom_pool_changed(self, text: str):
+        self.config_mgr.set("custom_pool_url", text.strip())
+        self._update_target_summary()
+
+    def _on_worker_changed(self, text: str):
+        self.config_mgr.set("worker_name", text.strip())
+        self._update_target_summary()
+
+    def _update_target_summary(self):
+        if not hasattr(self, "lbl_current_target_summary"):
+            return
+        if self.target_type == "solo":
+            host = self.config_mgr.get("solo_host", "127.0.0.1")
+            port = self.config_mgr.get("solo_port", 9402)
+            self.lbl_current_target_summary.setText(f"📍 接続先: ソロマイニング (Monacoin Core RPC: {host}:{port})")
+        else:
+            p_idx = self.combo_pool.currentIndex() if hasattr(self, "combo_pool") else 0
+            if p_idx == 2:
+                url = self.edit_custom_pool.text().strip() if hasattr(self, "edit_custom_pool") else ""
+                pool_name = f"カスタム ({url or '未設定'})"
+            else:
+                pool_name = self.combo_pool.currentText() if hasattr(self, "combo_pool") else "VIPPOOL"
+            worker = self.edit_worker.text().strip() if hasattr(self, "edit_worker") else "worker1"
+            self.lbl_current_target_summary.setText(f"📍 接続先: {pool_name} ｜ ワーカー: {worker or '未設定'}")
 
     def _validate_address_input(self, text: str):
         self.config_mgr.set("wallet_address", text.strip())

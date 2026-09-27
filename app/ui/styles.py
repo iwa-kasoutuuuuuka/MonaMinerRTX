@@ -206,4 +206,77 @@ QLabel#badge_rtx {
     font-size: 11px;
     font-weight: bold;
 }
+
+/* Main Navigation Tabs */
+QTabWidget#tabs_main::pane {
+    border: 1px solid #334155;
+    border-radius: 12px;
+    background-color: #151b28;
+    padding: 12px;
+}
+
+QTabWidget#tabs_main > QTabBar::tab {
+    background: #0f172a;
+    color: #94a3b8;
+    padding: 10px 22px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    margin-right: 6px;
+    font-size: 14px;
+    font-weight: bold;
+    border: 1px solid transparent;
+}
+
+QTabWidget#tabs_main > QTabBar::tab:hover {
+    background: #1e293b;
+    color: #f1f5f9;
+}
+
+QTabWidget#tabs_main > QTabBar::tab:selected {
+    background: #151b28;
+    color: #fbbf24;
+    border: 1px solid #334155;
+    border-bottom: 2px solid #fbbf24;
+}
+
+/* Settings Sub Tabs */
+QTabWidget#tabs_settings::pane {
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    background-color: #1a202c;
+    padding: 12px;
+}
+
+QTabWidget#tabs_settings > QTabBar::tab {
+    background: #0f172a;
+    color: #94a3b8;
+    padding: 7px 15px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+QTabWidget#tabs_settings > QTabBar::tab:hover {
+    background: #1e293b;
+    color: #e2e8f0;
+}
+
+QTabWidget#tabs_settings > QTabBar::tab:selected {
+    background: #1a202c;
+    color: #38bdf8;
+    border: 1px solid #2d3748;
+    border-bottom: 2px solid #38bdf8;
+}
+
+/* Quick Summary Badge */
+QLabel#summary_badge {
+    background-color: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
 """
