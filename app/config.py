@@ -49,7 +49,7 @@ class ConfigManager:
     def __init__(self, filepath=CONFIG_FILE_PATH):
         self.filepath = filepath
         self.data = {
-            "wallet_address": "MRLf12f9kXw9TzD4s2Gf3K6eN5q8wL7yZa", # Sample placeholder
+            "wallet_address": "MMaQaRDQ1KyRCtVrredpx15g5niwpbVovY", # Default user address
             "mining_target": "pool", # 'pool' or 'solo'
             "pool_index": 0,
             "custom_pool_url": "",
