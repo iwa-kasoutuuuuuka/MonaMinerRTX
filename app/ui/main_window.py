@@ -475,6 +475,22 @@ class MainWindow(QMainWindow):
         lbl_solo_hint.setStyleSheet("color: #a5b4fc; font-size: 11px;")
         tab_solo_layout.addWidget(lbl_solo_hint, 2, 0, 1, 4)
 
+        # Solo Action Buttons (RPC test & Launch regtest testbed)
+        solo_btn_row = QHBoxLayout()
+        btn_test_rpc = QPushButton("🔍 ノード接続テスト (RPC Check)")
+        btn_test_rpc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        btn_test_rpc.setCursor(Qt.PointingHandCursor)
+        btn_test_rpc.clicked.connect(self._test_solo_rpc_connection)
+        solo_btn_row.addWidget(btn_test_rpc)
+
+        btn_launch_regtest = QPushButton("⚡ 即座テスト環境起動 (Regtest ノード起動)")
+        btn_launch_regtest.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        btn_launch_regtest.setCursor(Qt.PointingHandCursor)
+        btn_launch_regtest.clicked.connect(self._launch_regtest_environment)
+        solo_btn_row.addWidget(btn_launch_regtest)
+
+        tab_solo_layout.addLayout(solo_btn_row, 3, 0, 1, 4)
+
         self.tabs_target.addTab(tab_solo, "🏠 ソロマイニング (Monacoin Core RPC)")
 
         if self.config_mgr.get("mining_target", "pool") == "solo":
@@ -1153,6 +1169,51 @@ class MainWindow(QMainWindow):
             self.card_shares.set_value(f"{accepted} blocks")
         else:
             self.card_shares.set_value(f"{accepted} / {accepted + rejected}")
+
+    def _test_solo_rpc_connection(self):
+        from app.miner.rpc_solo_client import RpcSoloClient
+        host = self.edit_solo_host.text().strip() or "127.0.0.1"
+        port = self.spin_solo_port.value()
+        user = self.edit_solo_user.text().strip()
+        pwd = self.edit_solo_pass.text()
+
+        self.console.append_log(f"🔍 Monacoin Core RPC 接続テスト中: http://{host}:{port}...", "info")
+        client = RpcSoloClient(host=host, port=port, user=user, password=pwd)
+        ok, msg, info = client.test_connection()
+        if ok:
+            self.console.append_log(f"✓ {msg}", "success")
+            QMessageBox.information(
+                self, "RPC 接続成功",
+                f"Monacoin Core ノードへの接続を確認しました！\n\n{msg}\n\nソロマイニングの準備が整っています。"
+            )
+        else:
+            self.console.append_log(f"✗ {msg}", "error")
+            QMessageBox.warning(
+                self, "RPC 接続失敗",
+                f"Monacoin Core ノードへの接続に失敗しました:\n\n{msg}\n\n"
+                "・Monacoin Core が起動しているか確認してください。\n"
+                "・monacoin.conf に server=1, rpcuser, rpcpassword, rpcport が正しく設定されているか確認してください。"
+            )
+
+    def _launch_regtest_environment(self):
+        import subprocess
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        bat_path = os.path.join(base_dir, "node", "start_regtest_solo.bat")
+        if not os.path.exists(bat_path):
+            QMessageBox.warning(self, "エラー", f"起動スクリプトが見つかりません:\n{bat_path}")
+            return
+
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", bat_path], shell=True)
+            self.console.append_log("⚡ 即座テスト用 Regtest ソロマイニング環境の別ウィンドウ起動を要求しました。", "info")
+            QMessageBox.information(
+                self, "Regtest 環境起動",
+                "即時テスト用のローカル Regtest ノードクラスタを別ウィンドウで起動しました。\n\n"
+                "1. 黒いコンソール画面で『GPU ソロマイニング待機状態に入りました！』と表示されるまで約5秒お待ちください。\n"
+                "2. その後、本アプリの『採掘開始』ボタンを押すと、RTX 5080等で即座にブロック発見・報酬獲得テストが行えます。"
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "起動エラー", f"Regtest 環境の起動に失敗しました: {e}")
 
     def closeEvent(self, event):
         if self.miner_ctrl.is_mining:

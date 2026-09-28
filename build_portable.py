@@ -44,6 +44,7 @@ def build():
         "--hidden-import=app.miner.opencl_backend",
         "--hidden-import=app.miner.opencl_miner",
         "--hidden-import=app.miner.stratum_client",
+        "--hidden-import=app.miner.rpc_solo_client",
         "--hidden-import=app.services",
         "--hidden-import=app.services.idle_tracker",
         "--hidden-import=app.services.profit_calc",
@@ -88,6 +89,23 @@ def build():
             shutil.rmtree(dst_kernels)
         shutil.copytree(src_kernels, dst_kernels)
         print("  - コピー: app/miner/kernels/ (lyra2v2.cl)")
+
+    # Copy node directory (scripts, conf, bin if present, excluding large data dirs)
+    src_node = os.path.join(PROJECT_DIR, "node")
+    dst_node = os.path.join(OUTPUT_FOLDER, "node")
+    if os.path.exists(src_node):
+        if os.path.exists(dst_node):
+            shutil.rmtree(dst_node)
+        os.makedirs(dst_node, exist_ok=True)
+        # Copy root files of node/
+        for item in os.listdir(src_node):
+            s_item = os.path.join(src_node, item)
+            d_item = os.path.join(dst_node, item)
+            if os.path.isfile(s_item):
+                shutil.copy2(s_item, d_item)
+            elif os.path.isdir(s_item) and item == "bin":
+                shutil.copytree(s_item, d_item)
+        print("  - コピー: node/ (Monacoin Core バイナリ、設定、ソロ起動スクリプト群)")
 
     # Portable run.bat
     portable_bat = os.path.join(OUTPUT_FOLDER, "起動する.bat")

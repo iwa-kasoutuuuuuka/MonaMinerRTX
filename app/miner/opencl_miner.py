@@ -14,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext, OpenCLException
 from app.miner.stratum_client import StratumClient, StratumJob, diff_to_target
+from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
 
 class OpenCLMinerWorker(QThread):
     hashrate_update = Signal(float, float, float) # hashrate_mhs, power_w, eff_mhw
@@ -46,6 +47,8 @@ class OpenCLMinerWorker(QThread):
         self.accepted_shares = 0
         self.rejected_shares = 0
         self.stratum: StratumClient = None
+        self.solo_client: RpcSoloClient = None
+        self.current_template: SoloBlockTemplate = None
         self.ctx_list = [] # List of (OpenCLContext, kernel, dev_info, buffers, base_nonce, batch_size)
 
     def run(self):
@@ -118,8 +121,28 @@ class OpenCLMinerWorker(QThread):
             self.log_message.emit(f"OpenCL Multi-GPU 初期化失敗: {e}", "error")
             return
 
-        # 3. Setup Stratum Client
-        if self.target_type != "solo":
+        # 3. Setup Client (Stratum for Pool, RpcSoloClient for Solo)
+        if self.target_type == "solo":
+            self.solo_client = RpcSoloClient(
+                host=self.solo_host,
+                port=self.solo_port,
+                user=self.solo_user,
+                password=self.solo_pass,
+                wallet_address=self.wallet
+            )
+            self.log_message.emit(f"Monacoin Core RPC 接続確認中: http://{self.solo_host}:{self.solo_port}...", "info")
+            ok, msg, _ = self.solo_client.test_connection()
+            if not ok:
+                self.log_message.emit(f"ノード接続エラー: {msg}", "error")
+                for item in self.ctx_list:
+                    try:
+                        item["ctx"].release()
+                    except Exception:
+                        pass
+                self.ctx_list.clear()
+                return
+            self.log_message.emit(f"✓ {msg}", "success")
+        else:
             clean_url = (self.pool_url or "").replace("stratum+tcp://", "").replace("tcp://", "").strip()
             if ":" in clean_url:
                 host, port_str = clean_url.split(":", 1)
@@ -172,23 +195,46 @@ class OpenCLMinerWorker(QThread):
 
         total_hashes_window = 0
         t_start_window = time.perf_counter()
+        t_last_solo_poll = 0.0
 
         while self._running:
-            # Check current job
-            current_job = self.stratum.current_job if self.stratum else None
-            current_target = self.stratum.target if self.stratum else 0x00000000FFFF0000000000000000000000000000000000000000000000000000
+            # Check current job / template
+            if self.target_type == "solo":
+                now_mono = time.monotonic()
+                # Poll block template every 1.5 seconds or immediately if none
+                if self.current_template is None or (now_mono - t_last_solo_poll) >= 1.5:
+                    t_last_solo_poll = now_mono
+                    tpl, err = self.solo_client.get_block_template()
+                    if err:
+                        self.log_message.emit(f"[Solo RPC] {err}", "warn")
+                        time.sleep(0.5)
+                        continue
+                    if self.current_template is None or tpl.prev_hash_hex != self.current_template.prev_hash_hex:
+                        self.current_template = tpl
+                        self.log_message.emit(
+                            f"[Solo] 新ブロックテンプレート受信: 高さ #{tpl.height:,} "
+                            f"(Diff Target High: 0x{tpl.target_high:08x}, 報酬: {tpl.coinbase_value / 1e8:.2f} MONA)",
+                            "info"
+                        )
+                current_target_high = self.current_template.target_high if self.current_template else 0x0000FFFF
+                header_76 = self.current_template.header_76 if self.current_template else (b"\x00" * 76)
+                job_key = (self.current_template.height, self.current_template.prev_hash_hex) if self.current_template else "none"
+            else:
+                current_job = self.stratum.current_job if self.stratum else None
+                current_target = self.stratum.target if self.stratum else 0x00000000FFFF0000000000000000000000000000000000000000000000000000
 
-            if not current_job and self.target_type != "solo":
-                time.sleep(0.05)
-                continue
+                if not current_job:
+                    time.sleep(0.05)
+                    continue
 
-            # Target upper 32-bit threshold
-            target_high = (current_target >> 224) & 0xFFFFFFFF
-            if target_high == 0:
-                target_high = 0x0000FFFF
+                # Target upper 32-bit threshold
+                current_target_high = (current_target >> 224) & 0xFFFFFFFF
+                if current_target_high == 0:
+                    current_target_high = 0x0000FFFF
 
-            en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}" if current_job else "0000"
-            job_key = (current_job.job_id, en2_hex, current_job.ntime) if current_job else "solo_dummy"
+                en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}"
+                header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+                job_key = (current_job.job_id, en2_hex, current_job.ntime)
 
             for item in self.ctx_list:
                 ctx = item["ctx"]
@@ -199,12 +245,8 @@ class OpenCLMinerWorker(QThread):
                 buf_found_nonce = item["buf_found_nonce"]
                 buf_found_count = item["buf_found_count"]
 
-                # Build 76-byte header only when job or extranonce2 changes
+                # Build 76-byte header only when job or template changes
                 if job_key != item["last_job_key"]:
-                    if current_job:
-                        header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
-                    else:
-                        header_76 = b"\x00" * 76
                     c_header = (c_uint * 19).from_buffer_copy(header_76)
                     ctx.write_buffer(buf_header, c_header, 19 * 4)
                     item["last_job_key"] = job_key
@@ -218,7 +260,7 @@ class OpenCLMinerWorker(QThread):
                 # Set kernel arguments
                 ctx.set_arg_mem(kernel, 0, buf_header)
                 ctx.set_arg_uint(kernel, 1, item["base_nonce"])
-                ctx.set_arg_uint(kernel, 2, target_high)
+                ctx.set_arg_uint(kernel, 2, current_target_high)
                 ctx.set_arg_mem(kernel, 3, buf_found_nonce)
                 ctx.set_arg_mem(kernel, 4, buf_found_count)
 
@@ -240,14 +282,28 @@ class OpenCLMinerWorker(QThread):
                         "success"
                     )
 
-                    if self.stratum and current_job:
-                        self.stratum.submit_share(
-                            job_id=current_job.job_id,
-                            extranonce2=en2_hex,
-                            ntime=current_job.ntime,
-                            nonce_uint=found_nonce,
-                            callback=self._on_share_response
-                        )
+                    if self.target_type == "solo":
+                        if self.current_template:
+                            ok, submit_msg = self.solo_client.submit_block(self.current_template, found_nonce)
+                            if ok:
+                                self.accepted_shares += 1
+                                self.shares_update.emit(self.accepted_shares, self.rejected_shares)
+                                self.log_message.emit(submit_msg, "success")
+                                # Clear template so next iteration fetches new block template immediately
+                                self.current_template = None
+                            else:
+                                self.rejected_shares += 1
+                                self.shares_update.emit(self.accepted_shares, self.rejected_shares)
+                                self.log_message.emit(submit_msg, "error")
+                    else:
+                        if self.stratum and current_job:
+                            self.stratum.submit_share(
+                                job_id=current_job.job_id,
+                                extranonce2=en2_hex,
+                                ntime=current_job.ntime,
+                                nonce_uint=found_nonce,
+                                callback=self._on_share_response
+                            )
 
                 item["base_nonce"] = (item["base_nonce"] + batch_size) & 0xFFFFFFFF
                 total_hashes_window += batch_size

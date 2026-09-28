@@ -46,3 +46,8 @@ config.json
 .vscode/
 .idea/
 *.swp
+
+# Monacoin Node Blockchain Data
+node/regtest_data/
+node/mainnet_data/
+
