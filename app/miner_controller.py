@@ -153,7 +153,7 @@ class SimulatorWorker(QThread):
                     self.blocks_found += 1
                     self.shares_update.emit(self.blocks_found, 0)
                     self.log_message.emit(
-                        f"🎉🎉🎉【ソロブロック発見!】ブロック #{current_block} を採掘しました！ 報酬: 3.125 MONA を受け取りました！",
+                        f"🎉🎉🎉【ソロブロック発見!】ブロック #{current_block} を採掘しました！ 報酬: 6.25 MONA を受け取りました！",
                         "success"
                     )
             else:

@@ -762,14 +762,74 @@ static void lyra2_4x4_l4(const u32 pwd[8], u32 out[8]) {
     }
 }
 
+/*
+ * CubeHash for NVIDIA: identical to cubehash256_32 except that the two 16-word additions of
+ * every round are written as integer multiply-adds (x[i] * one + x[i+16]). That moves them from
+ * the ALU pipe (adds, xors, shifts) to the FMA pipe, which is otherwise idle, and balances the
+ * two (+~7% on the whole hash on RTX 5080). `one` must be a run-time value equal to 1: with a
+ * literal 1 the compiler folds the multiply back into an add. Rotations as multiply-adds and
+ * partial (50%/75%) conversion were measured and are slower.
+ */
+static void cubehash_round_imad(u32 x[32], u32 one) {
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i + 16] = x[i] * one + x[i + 16];
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i] = ROTL32(x[i], 7);
+    #pragma unroll
+    for (int i = 0; i < 8; i++) { u32 t = x[i]; x[i] = x[i + 8]; x[i + 8] = t; }
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i] ^= x[i + 16];
+    #pragma unroll
+    for (int i = 16; i < 32; i += 4) {
+        u32 t = x[i];     x[i]     = x[i + 2]; x[i + 2] = t;
+        t     = x[i + 1]; x[i + 1] = x[i + 3]; x[i + 3] = t;
+    }
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i + 16] = x[i] * one + x[i + 16];
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i] = ROTL32(x[i], 11);
+    #pragma unroll
+    for (int i = 0; i < 16; i += 8) {
+        #pragma unroll
+        for (int j = 0; j < 4; j++) { u32 t = x[i + j]; x[i + j] = x[i + j + 4]; x[i + j + 4] = t; }
+    }
+    #pragma unroll
+    for (int i = 0; i < 16; i++) x[i] ^= x[i + 16];
+    #pragma unroll
+    for (int i = 16; i < 32; i += 2) { u32 t = x[i]; x[i] = x[i + 1]; x[i + 1] = t; }
+}
+
+static void cubehash256_32_imad(const u32 in[8], u32 out[8], u32 one) {
+    u32 x[32];
+    #pragma unroll
+    for (int i = 0; i < 32; i++) x[i] = CUBE_IV[i];
+    #pragma unroll
+    for (int i = 0; i < 8; i++) x[i] ^= in[i];
+    for (int r = 0; r < 16; r++) cubehash_round_imad(x, one);
+    x[0] ^= 0x80u;
+    for (int r = 0; r < 16; r++) cubehash_round_imad(x, one);
+    x[31] ^= 1u;
+    for (int r = 0; r < 160; r++) cubehash_round_imad(x, one);
+    #pragma unroll
+    for (int i = 0; i < 8; i++) out[i] = x[i];
+}
+
+/* IMAD CubeHash is only enabled by the host for SM120 (compute capability 12.x), where it was measured
+ * to be faster; older NVIDIA architectures have slower 32-bit integer multiplies. */
+#ifdef LYRA2_NV_CUBE_IMAD
+#define CUBE_NV(in, out) cubehash256_32_imad(in, out, one)
+#else
+#define CUBE_NV(in, out) cubehash256_32(in, out)
+#endif
+
 /* One nonce per work-item; the 4 lanes of a group run Lyra2 together for each lane's nonce in turn. */
-static void lyra2rev2_hash_l4(const u32 header[20], u32 out[8]) {
+static void lyra2rev2_hash_l4(const u32 header[20], u32 out[8], u32 one) {
     const u32 lane = (u32)get_local_id(0) & 31u;
     const u32 t = lane & 3u, base = lane & ~3u;
     u32 a[8], b[8], mine[8];
     blake256_80(header, a);
     keccak256_32(a, b);
-    cubehash256_32(b, a);
+    CUBE_NV(b, a);
     for (int j = 0; j < 4; j++) {
         u32 in8[8], o[8];
         #pragma unroll
@@ -779,18 +839,19 @@ static void lyra2rev2_hash_l4(const u32 header[20], u32 out[8]) {
         for (int i = 0; i < 8; i++) mine[i] = (t == (u32)j) ? o[i] : mine[i];
     }
     skein256_32(mine, a);
-    cubehash256_32(a, b);
+    CUBE_NV(a, b);
     bmw256_32(b, out);
 }
 
-/* Same interface and results as search_lyra2v2. */
+/* Same results as search_lyra2v2. Argument 6 (cube_one) MUST be 1 (see cubehash_round_imad). */
 __kernel void search_lyra2v2_nv(
     __constant u32 *header_prefix,
     const u32 base_nonce,
     const u32 target_hi,
     const u32 target_lo,
     __global u32 *found_nonce,
-    __global u32 *found_count
+    __global u32 *found_count,
+    const u32 cube_one
 ) {
     u32 nonce = base_nonce + (u32)get_global_id(0);
 
@@ -800,7 +861,7 @@ __kernel void search_lyra2v2_nv(
     header[19] = nonce;
 
     u32 h[8];
-    lyra2rev2_hash_l4(header, h);
+    lyra2rev2_hash_l4(header, h, cube_one);
 
     if (h[7] < target_hi || (h[7] == target_hi && h[6] <= target_lo)) {
         u32 idx = atomic_inc(found_count);

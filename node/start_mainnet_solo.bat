@@ -21,5 +21,7 @@ bin\monacoind.exe -conf="%~dp0monacoin.conf" -datadir="%~dp0mainnet_data"
 if %errorlevel% neq 0 (
     echo.
     echo [エラー] monacoind.exe の起動に失敗しました。
+    echo   ※ 上に「Cannot obtain a lock on data directory」と出ている場合は、すでに別のノードが
+    echo     この mainnet_data で動いています。このウィンドウは閉じて構いません。
     pause
 )

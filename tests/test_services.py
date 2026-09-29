@@ -152,6 +152,18 @@ class TestNodeSyncInfo(unittest.TestCase):
         self.assertTrue(info["is_loading"])
         self.assertIn("Loading block index", info["status_text"])
 
+    def test_busy_node_that_does_not_answer_counts_as_running(self):
+        """A node stuck in header sync can accept the TCP connection yet not answer within the timeout."""
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(5)   # never accept()/reply: the request is sent, the read times out
+        try:
+            info = fetch_node_sync_info("127.0.0.1", s.getsockname()[1], timeout=0.5)
+        finally:
+            s.close()
+        self.assertTrue(info["is_running"])
+        self.assertTrue(info["is_loading"])
+
     def test_nothing_listening(self):
         s = socket.socket()
         s.bind(("127.0.0.1", 0))

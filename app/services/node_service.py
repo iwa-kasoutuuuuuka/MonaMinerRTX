@@ -4,6 +4,7 @@ Provides fast, non-blocking queries for local Monacoin Core blockchain sync info
 """
 import base64
 import json
+import socket
 import urllib.request
 import urllib.error
 from typing import Dict, Any
@@ -62,6 +63,11 @@ def fetch_node_sync_info(host: str = "127.0.0.1", port: int = 9402,
             err_msg = ""
         return _status(port, is_running=True, is_loading=True, ibd=True,
                        status_text=f"ノード起動・初期化中... ({err_msg or f'HTTP {e.code}'})")
+    except (socket.timeout, TimeoutError):
+        # Connected but no reply in time: a node busy with header sync / block validation can stall RPC.
+        # (A connect failure is a URLError, so this is never a stopped node.)
+        return _status(port, is_running=True, is_loading=True, ibd=True,
+                       status_text="ノード応答待ち (同期処理などで忙しい可能性があります)")
     except Exception:
         return _status(port, status_text="ノード停止中 (ローカルノード未起動)")
 

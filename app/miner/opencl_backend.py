@@ -39,6 +39,9 @@ CL_DEVICE_MAX_WORK_GROUP_SIZE = 0x1004
 CL_DEVICE_MAX_CLOCK_FREQUENCY = 0x100C
 CL_DEVICE_GLOBAL_MEM_SIZE = 0x101F
 CL_DEVICE_MAX_MEM_ALLOC_SIZE = 0x1010
+# cl_nv_device_attribute_query (NVIDIA only): CUDA compute capability, e.g. 12.0 = SM120 (RTX 50)
+CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV = 0x4000
+CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV = 0x4001
 
 # cl_mem_flags
 CL_MEM_READ_WRITE = (1 << 0)
@@ -229,11 +232,18 @@ class OpenCLBackend:
             mem_bytes = c_ulonglong(0)
             lib.clGetDeviceInfo(d, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(mem_bytes), byref(mem_bytes), None)
 
+            cc = [c_uint(0), c_uint(0)]
+            if "NVIDIA" in dev_vendor.upper():
+                for i, param in enumerate((CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV, CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV)):
+                    if lib.clGetDeviceInfo(d, param, sizeof(cc[i]), byref(cc[i]), None) != CL_SUCCESS:
+                        cc[i] = c_uint(0)
+
             res.append({
                 "id": d,
                 "name": dev_name,
                 "vendor": dev_vendor,
                 "driver": driver_ver,
+                "cuda_cc": (cc[0].value, cc[1].value),   # (0, 0) for non-NVIDIA / unknown
                 "compute_units": cu.value,
                 "max_work_group_size": max_wg.value,
                 "global_mem_gb": round(mem_bytes.value / (1024 ** 3), 2),

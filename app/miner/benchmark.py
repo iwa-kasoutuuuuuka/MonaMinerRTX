@@ -22,8 +22,11 @@ def build_search_kernel(ctx: OpenCLContext, device: dict, source: str):
     NVIDIA gets the warp-shuffle Lyra2 kernel; its local size (work-group) must be a multiple of 32."""
     if "NVIDIA" in (device.get("vendor") or "").upper() and device.get("max_work_group_size", 0) >= 128:
         try:
-            ctx.build_program(source, options=BUILD_OPTIONS + " -DLYRA2_NV_SHFL")
-            return ctx.get_kernel("search_lyra2v2_nv"), "NVIDIA warp-shuffle"
+            imad = tuple(device.get("cuda_cc", (0, 0)))[0] >= 12   # SM120 (RTX 50): CubeHash with IMAD adds
+            ctx.build_program(source, options=BUILD_OPTIONS + " -DLYRA2_NV_SHFL" + (" -DLYRA2_NV_CUBE_IMAD" if imad else ""))
+            kernel = ctx.get_kernel("search_lyra2v2_nv")
+            ctx.set_arg_uint(kernel, 6, 1)   # cube_one: must be a run-time 1 (kernel arg persists across launches)
+            return kernel, "NVIDIA warp-shuffle" + (" + IMAD CubeHash (SM120)" if imad else "")
         except Exception:
             pass
     ctx.build_program(source, options=BUILD_OPTIONS)

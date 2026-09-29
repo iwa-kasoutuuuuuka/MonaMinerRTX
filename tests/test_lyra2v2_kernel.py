@@ -163,6 +163,8 @@ class TestSearchKernel(KernelTestBase):
         ctx.set_arg_uint(k, 3, target_lo)
         ctx.set_arg_mem(k, 4, bn)
         ctx.set_arg_mem(k, 5, bc)
+        if self.kernel_name == "search_lyra2v2_nv":
+            ctx.set_arg_uint(k, 6, 1)   # cube_one
         ctx.run_kernel_1d(k, count, min(count, 128))
         ctx.finish()
         c = (c_uint * 1)(0)
@@ -220,6 +222,11 @@ class TestSearchKernelNvidia(TestSearchKernel):
     build_options = TestSearchKernel.build_options + " -DLYRA2_NV_SHFL"
     kernel_name = "search_lyra2v2_nv"
     size_multiple = 32
+
+
+class TestSearchKernelNvidiaImad(TestSearchKernelNvidia):
+    """Same, with the IMAD CubeHash that the host enables on SM120."""
+    build_options = TestSearchKernelNvidia.build_options + " -DLYRA2_NV_CUBE_IMAD"
 
 
 if __name__ == "__main__":
