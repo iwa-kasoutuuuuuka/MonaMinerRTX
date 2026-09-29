@@ -176,8 +176,9 @@ class WalletHistoryDialog(QDialog):
 
         layout.addLayout(btn_bar)
 
-        # Fetch Worker reference
+        # The fetch cannot be interrupted (blocking HTTP); MainWindow.closeEvent waits for it.
         self.worker = None
+        self._explorer_url = ""
 
         # Auto fetch on open
         if self.address:
@@ -228,6 +229,7 @@ class WalletHistoryDialog(QDialog):
             self.lbl_status.setText(f"❌ エラー: {err}")
             return
 
+        self._explorer_url = res.get("explorer_url", "")
         bal = res.get("balance", 0.0)
         recv = res.get("total_received", 0.0)
         sent = res.get("total_sent", 0.0)
@@ -251,31 +253,33 @@ class WalletHistoryDialog(QDialog):
             item_time.setTextAlignment(Qt.AlignCenter)
             self.table_txs.setItem(row_idx, 0, item_time)
 
-            # 1. Type
-            is_recv = tx.get("is_receive", True)
-            type_text = "🟢 入金 (+)" if is_recv else "🔴 出金 (-)"
+            # 1. Type (None: the fallback API gave no amounts for this transaction)
+            is_recv = tx.get("is_receive")
+            type_text = "— 不明" if is_recv is None else ("🟢 入金 (+)" if is_recv else "🔴 出金 (-)")
             item_type = QTableWidgetItem(type_text)
             item_type.setTextAlignment(Qt.AlignCenter)
             self.table_txs.setItem(row_idx, 1, item_type)
 
             # 2. Delta Amount
-            delta = tx.get("delta", 0.0)
-            sign = "+" if delta >= 0 else ""
-            delta_str = f"{sign}{delta:.8f} MONA"
+            delta = tx.get("delta")
+            if delta is None:
+                delta_str = "--"
+            else:
+                delta_str = f"{'+' if delta >= 0 else ''}{delta:.8f} MONA"
             item_amt = QTableWidgetItem(delta_str)
             item_amt.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             item_amt.setFont(QFont("Consolas", 10, QFont.Bold))
-            if is_recv:
-                item_amt.setForeground(QColor("#10b981"))
-            else:
-                item_amt.setForeground(QColor("#f43f5e"))
+            if is_recv is not None:
+                item_amt.setForeground(QColor("#10b981" if is_recv else "#f43f5e"))
             self.table_txs.setItem(row_idx, 2, item_amt)
 
             # 3. Confirmations
-            confs = tx.get("confirmations", 0)
-            item_conf = QTableWidgetItem(f"{confs:,}")
+            confs = tx.get("confirmations")
+            item_conf = QTableWidgetItem("--" if confs is None else f"{confs:,}")
             item_conf.setTextAlignment(Qt.AlignCenter)
-            if confs >= 6:
+            if confs is None:
+                pass
+            elif confs >= 6:
                 item_conf.setForeground(QColor("#38bdf8"))
             else:
                 item_conf.setForeground(QColor("#fbbf24"))
@@ -309,17 +313,4 @@ class WalletHistoryDialog(QDialog):
 
     def _open_web_explorer(self):
         if self.address:
-            url = f"https://blockbook.electrum-mona.org/address/{self.address}"
-            webbrowser.open(url)
-
-    def closeEvent(self, event):
-        if self.worker and self.worker.isRunning():
-            self.worker.quit()
-            self.worker.wait(1000)
-        super().closeEvent(event)
-
-    def reject(self):
-        if self.worker and self.worker.isRunning():
-            self.worker.quit()
-            self.worker.wait(1000)
-        super().reject()
+            webbrowser.open(self._explorer_url or f"https://blockbook.electrum-mona.org/address/{self.address}")

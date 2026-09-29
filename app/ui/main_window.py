@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import time
 import webbrowser
 from PySide6.QtWidgets import (
@@ -21,6 +23,19 @@ from app.services import (
 )
 from app.miner.opencl_backend import OpenCLBackend
 from app.miner.benchmark import BenchmarkWorker
+
+
+def _app_root() -> str:
+    # Frozen: node/ is copied next to the exe, while __file__ points into _internal/.
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _launch_bat_in_new_window(bat_path: str):
+    # The empty "" is start's window title; without it a quoted path (one containing spaces)
+    # is taken as the title and the script never runs.
+    subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=os.path.dirname(bat_path))
 
 
 class NodeSyncWorker(QThread):
@@ -48,6 +63,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._web_snapshot = {}
+        self._last_node_info = {}
+        self._node_worker = None
         self.setWindowTitle("MonaMiner RTX / RX v2.1.1 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(920, 640)
         self.resize(1120, 880)
@@ -319,7 +336,7 @@ class MainWindow(QMainWindow):
         self.lbl_local_held_block.setStyleSheet("font-size: 12px; font-weight: bold; color: #e2e8f0;")
         sync_num_row.addWidget(self.lbl_local_held_block)
 
-        self.lbl_sync_detail = QLabel("ノード未起動 (クリックで起動)")
+        self.lbl_sync_detail = QLabel("ノード未起動 (「⚡ 本番ノード起動」で起動できます)")
         self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #94a3b8;")
         sync_num_row.addWidget(self.lbl_sync_detail)
         sync_num_row.addStretch()
@@ -1373,15 +1390,15 @@ class MainWindow(QMainWindow):
             )
 
     def _launch_regtest_environment(self):
-        import subprocess
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        bat_path = os.path.join(base_dir, "node", "start_regtest_solo.bat")
+        bat_path = os.path.join(_app_root(), "node", "start_regtest_solo.bat")
         if not os.path.exists(bat_path):
             QMessageBox.warning(self, "エラー", f"起動スクリプトが見つかりません:\n{bat_path}")
             return
+        if self._node_rpc_in_use("Regtest 環境"):
+            return
 
         try:
-            subprocess.Popen(["cmd.exe", "/c", "start", bat_path], shell=True)
+            _launch_bat_in_new_window(bat_path)
             self.console.append_log("⚡ 即座テスト用 Regtest ソロマイニング環境の別ウィンドウ起動を要求しました。", "info")
             QMessageBox.information(
                 self, "Regtest 環境起動",
@@ -1406,6 +1423,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        for old in self.findChildren(WalletHistoryDialog):
+            if not (old.worker and old.worker.isRunning()):
+                old.deleteLater()
         dlg = WalletHistoryDialog(addr, self)
         dlg.exec()
 
@@ -1416,7 +1436,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(1500, lambda: self.btn_sync_refresh.setEnabled(True))
 
     def _check_node_sync_async(self):
-        if getattr(self, "_node_worker", None) is not None and self._node_worker.isRunning():
+        if self._node_worker is not None and self._node_worker.isRunning():
             return
 
         host = self.config_mgr.get("solo_host", "127.0.0.1")
@@ -1429,6 +1449,7 @@ class MainWindow(QMainWindow):
         self._node_worker.start()
 
     def _on_node_sync_updated(self, info: dict):
+        self._last_node_info = info
         is_running = info.get("is_running", False)
         is_loading = info.get("is_loading", False)
         blocks = info.get("blocks", 0)
@@ -1442,10 +1463,19 @@ class MainWindow(QMainWindow):
             self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #334155; color: #94a3b8;")
             self.lbl_net_best_block.setText("🌐 ネットワーク最新: --")
             self.lbl_local_held_block.setText("💻 このPCの所持ブロック: 未接続")
-            self.lbl_sync_detail.setText("ノード未起動 (クリックで起動)")
+            self.lbl_sync_detail.setText("ノード未起動 (「⚡ 本番ノード起動」で起動できます)")
             self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #94a3b8;")
             self.progress_sync.setValue(0)
             self.progress_sync.setFormat("ノード未起動")
+        elif info.get("auth_error"):
+            self.lbl_sync_badge.setText("⚠ RPC 認証エラー")
+            self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #b91c1c; color: white;")
+            self.lbl_net_best_block.setText("🌐 ネットワーク最新: --")
+            self.lbl_local_held_block.setText("💻 このPCの所持ブロック: 取得不可")
+            self.lbl_sync_detail.setText("ノードは稼働中ですが RPC ユーザー名/パスワードが一致しません (ソロマイニング設定を確認)")
+            self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #f87171;")
+            self.progress_sync.setValue(0)
+            self.progress_sync.setFormat("RPC 認証エラー")
         elif is_loading:
             self.lbl_sync_badge.setText("⏳ 初期化中...")
             self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #d97706; color: white;")
@@ -1475,16 +1505,31 @@ class MainWindow(QMainWindow):
             self.progress_sync.setValue(1000)
             self.progress_sync.setFormat(f"同期 100% (最新 #{blocks:,})")
 
+    def _node_rpc_in_use(self, what: str) -> bool:
+        """Both bundled launchers bind RPC port 9402; a second node there cannot start."""
+        info = self._last_node_info
+        if not info.get("is_running") or info.get("port") != 9402:
+            return False
+        chain = str(info.get("chain", "")).upper() or "不明"
+        QMessageBox.information(
+            self, f"{what}の起動",
+            f"RPC ポート 9402 ではすでに Monacoin Core ノード (チェーン: {chain}) が稼働中です。\n"
+            f"同じポートを使うため、{what}は起動できません。\n\n"
+            "別のノードを使う場合は、先に稼働中のノードを停止してください "
+            "(Regtest: node/stop_nodes.bat、本番: .\\node\\monacoin_cli.bat stop)。"
+        )
+        return True
+
     def _launch_mainnet_environment(self):
-        import subprocess
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        bat_path = os.path.join(base_dir, "node", "start_mainnet_solo.bat")
+        bat_path = os.path.join(_app_root(), "node", "start_mainnet_solo.bat")
         if not os.path.exists(bat_path):
             QMessageBox.warning(self, "エラー", f"起動スクリプトが見つかりません:\n{bat_path}")
             return
+        if self._node_rpc_in_use("本番ノード"):
+            return
 
         try:
-            subprocess.Popen(["cmd.exe", "/c", "start", bat_path], shell=True)
+            _launch_bat_in_new_window(bat_path)
             self.console.append_log("🌐 本番メインネット Monacoin Core ノードの別ウィンドウ起動を要求しました。", "info")
             QMessageBox.information(
                 self, "メインネット ノード起動",
@@ -1499,6 +1544,14 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if hasattr(self, "node_sync_timer"):
             self.node_sync_timer.stop()
+        # Python drops these QThread wrappers when the window goes away; destroying a QThread
+        # that is still running aborts the whole process.
+        from app.ui.wallet_dialog import WalletHistoryDialog
+        pending = [self._node_worker, self._benchmark_worker]
+        pending += [dlg.worker for dlg in self.findChildren(WalletHistoryDialog)]
+        for worker in pending:
+            if worker is not None and worker.isRunning():
+                worker.wait(20000)
         if self.miner_ctrl.is_mining:
             self.miner_ctrl.stop_mining()
         self.web_server.stop()

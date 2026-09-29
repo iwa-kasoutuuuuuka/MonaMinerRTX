@@ -24,14 +24,14 @@ def run_diagnostics():
     print("=" * 60)
 
     # 1. Python Environment Check
-    print("\n[1/10] Python 実行環境チェック...")
+    print("\n[1/11] Python 実行環境チェック...")
     print(f"  - Python バージョン: {sys.version.split()[0]} ({sys.platform})")
     print(f"  - 実行パス: {sys.executable}")
     assert sys.version_info >= (3, 9), "Python 3.9以上が必要です"
     print("  -> OK")
 
     # 2. PySide6 (GUI) Check
-    print("\n[2/10] GUI ライブラリ (PySide6 / Qt6) チェック...")
+    print("\n[2/11] GUI ライブラリ (PySide6 / Qt6) チェック...")
     try:
         import PySide6
         from PySide6.QtWidgets import QApplication
@@ -42,7 +42,7 @@ def run_diagnostics():
         sys.exit(1)
 
     # 3. NVML & Hardware (RTX 5080) Check
-    print("\n[3/10] NVIDIA GPU ハードウェア検知 (NVML) チェック...")
+    print("\n[3/11] NVIDIA GPU ハードウェア検知 (NVML) チェック...")
     from app.hardware import HardwareManager
     hw = HardwareManager()
     if hw.has_nvml:
@@ -63,14 +63,14 @@ def run_diagnostics():
         print("  -> WARN: NVMLが初期化できませんでした（GPUなし、またはドライバー未適用環境）")
 
     # 4. Mode Recommendation Check
-    print("\n[4/10] 最適化モード判定ロジック チェック...")
+    print("\n[4/11] 最適化モード判定ロジック チェック...")
     rec = hw.get_mode_recommendation()
     print(f"  - 推奨モード: [{rec['recommended_key'].upper()}]")
     print(f"  - 判定理由:\n    {rec['rationale'].strip()}")
     print("  -> OK")
 
     # 5. Network & Mining Pool Reachability Check
-    print("\n[5/10] モナコイン マイニングプール導通テスト (TCP Handshake)...")
+    print("\n[5/11] モナコイン マイニングプール導通テスト (TCP Handshake)...")
     pools_to_test = [
         ("VIPPOOL プライマリ (stratum1.vippool.net:8888)", "stratum1.vippool.net", 8888),
         ("VIPPOOL セカンダリ (vippool.net:8888)", "vippool.net", 8888),
@@ -86,7 +86,7 @@ def run_diagnostics():
             print(f"  - {name}: 接続失敗 ({e}) - ※ファイアウォールまたは一時的オフラインの可能性")
 
     # 6. Mining Simulation Engine Check (Hybrid + Solo)
-    print("\n[6/10] マイナー制御 (ハイブリッド & ソロマイニング) 動作チェック...")
+    print("\n[6/11] マイナー制御 (ハイブリッド & ソロマイニング) 動作チェック...")
     import time
     from app.miner_controller import MinerController
     ctrl = MinerController(hw)
@@ -116,7 +116,7 @@ def run_diagnostics():
         print(f"    * {ev}")
     print("  -> OK")
 
-    print("\n[7/10] 独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック...")
+    print("\n[7/11] 独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック...")
     try:
         from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
         platforms = OpenCLBackend.get_platforms()
@@ -163,7 +163,7 @@ def run_diagnostics():
         print(f"  - OpenCL チェック失敗 (警告): {e}")
         failures.append("OpenCL")
 
-    print("\n[8/10] 独自内蔵 CPU マイナーエンジン (ネイティブ DLL) チェック...")
+    print("\n[8/11] 独自内蔵 CPU マイナーエンジン (ネイティブ DLL) チェック...")
     try:
         from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
         got = CpuBackend.hash80(KAT_HEADER).hex()
@@ -183,7 +183,7 @@ def run_diagnostics():
         print(f"  - CPU エンジン チェック失敗 (警告): {e}")
         failures.append("CPU engine")
 
-    print("\n[9/10] v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック...")
+    print("\n[9/11] v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック...")
     try:
         from app.services import ProfitCalculator, GpuHardwareController, IdleTracker, WebMonitoringServer
         pc = ProfitCalculator()
@@ -207,7 +207,7 @@ def run_diagnostics():
         print(f"  -> ERROR in v2.0.0 services: {e}")
         failures.append("services")
 
-    print("\n[10/10] Monacoin Core ソロマイニング RPC クライアント & ブロック構築検証...")
+    print("\n[10/11] Monacoin Core ソロマイニング RPC クライアント & ブロック構築検証...")
     try:
         from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
         solo = RpcSoloClient(host="127.0.0.1", port=9402, user="monacoinrpc", password="rpcpassword")
@@ -259,6 +259,10 @@ def run_diagnostics():
 
     hw.shutdown()
     print("\n" + "=" * 60)
+    if failures:
+        print(f"  診断で問題が見つかりました: {', '.join(failures)}")
+        print("=" * 60)
+        sys.exit(1)
     print("  すべての診断テストが正常に完了しました！[READY v2.1.1]")
     print("=" * 60)
 

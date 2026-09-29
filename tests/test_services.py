@@ -2,10 +2,15 @@
 Tests for the small services (no GPU needed):
     python -m unittest tests.test_services -v
 """
+import base64
 import ctypes
 import http.client
+import http.server
+import json
 import os
+import socket
 import sys
+import threading
 import types
 import unittest
 
@@ -14,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PySide6.QtCore import QCoreApplication
 
 from app.services import idle_tracker
+from app.services.node_service import fetch_node_sync_info
 from app.services.web_server import WebMonitoringServer
 
 
@@ -88,6 +94,72 @@ class TestWebServerSecurity(unittest.TestCase):
         resp.read()
         self.assertIsNone(resp.getheader("Access-Control-Allow-Origin"))
         conn.close()
+
+
+class _FakeRpcHandler(http.server.BaseHTTPRequestHandler):
+    """Answers like Monacoin Core: 401 without the right Basic auth, JSON otherwise."""
+    reply = (200, {"result": {}, "error": None})
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        expected = "Basic " + base64.b64encode(b"monacoinrpc:rpcpassword").decode()
+        if self.headers.get("Authorization") != expected:
+            self.send_response(401)
+            self.end_headers()
+            return
+        code, body = self.reply
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestNodeSyncInfo(unittest.TestCase):
+    def setUp(self):
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), _FakeRpcHandler)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def _fetch(self, reply, password="rpcpassword"):
+        _FakeRpcHandler.reply = reply
+        return fetch_node_sync_info("127.0.0.1", self.port, "monacoinrpc", password, timeout=3)
+
+    def test_syncing_node(self):
+        info = self._fetch((200, {"result": {"chain": "main", "blocks": 3_000_000, "headers": 4_000_000,
+                                             "initialblockdownload": True}, "error": None}))
+        self.assertTrue(info["is_running"])
+        self.assertTrue(info["ibd"])
+        self.assertEqual((info["blocks"], info["headers"]), (3_000_000, 4_000_000))
+        self.assertAlmostEqual(info["progress"], 75.0)
+
+    def test_wrong_password_is_not_reported_as_stopped(self):
+        info = self._fetch((200, {}), password="wrong")
+        self.assertTrue(info["is_running"])
+        self.assertTrue(info["auth_error"])
+
+    def test_loading_block_index(self):
+        info = self._fetch((500, {"result": None, "error": {"code": -28, "message": "Loading block index..."}}))
+        self.assertTrue(info["is_running"])
+        self.assertTrue(info["is_loading"])
+        self.assertIn("Loading block index", info["status_text"])
+
+    def test_nothing_listening(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        info = fetch_node_sync_info("127.0.0.1", port, timeout=1)
+        self.assertFalse(info["is_running"])
+        self.assertEqual(info["port"], port)
 
 
 if __name__ == "__main__":

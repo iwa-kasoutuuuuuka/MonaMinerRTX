@@ -108,15 +108,15 @@ def fetch_wallet_history(address: str, page: int = 1, page_size: int = 50) -> Di
             total_sent = float(data_in.get("totalSent", 0.0))
             tx_count = int(data_in.get("txApperances", len(data_in.get("transactions", []))))
 
-            # In insight addr, tx list is just hashes, so transactions list is summary
+            # Insight's /addr only lists txids: amount, direction and confirmations are unknown here.
             tx_list = []
             for txid in data_in.get("transactions", [])[:page_size]:
                 tx_list.append({
                     "txid": txid,
                     "time": "--",
-                    "delta": 0.0,
-                    "is_receive": True,
-                    "confirmations": 1,
+                    "delta": None,
+                    "is_receive": None,
+                    "confirmations": None,
                     "fee": 0.0,
                     "block_height": 0
                 })
