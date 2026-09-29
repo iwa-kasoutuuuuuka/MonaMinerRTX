@@ -5,8 +5,8 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.2.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.0.zip)
+[![Release](https://img.shields.io/badge/Release-v2.2.1-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.1.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.1.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 🌟 主な特徴 (v2.2.0)
+## 🌟 主な特徴 (v2.2.1)
 
 1. **🏠 2階層ナビゲーションGUI (かんたん採掘 ＆ 詳細設定・高度なツール)**:
    - 認知的過負荷を解消し、普段使いに必要な「受取アドレス入力」「デバイス・モード選択」「採掘開始」を1画面に集約。
@@ -95,7 +95,7 @@ v2.1.0 では、機能追加による煩雑さを解消するため、画面構�
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [MonaMiner RTX / RX v2.2.0] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
+│ [MonaMiner RTX / RX v2.2.1] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
 ├────────────────────────────────────────────────────────────────────────┤
 │ [ハッシュレート] [消費電力] [推定電気代(1日)] [電力効率] [温度/ファン] [承認シェア]│ ◄ 常時固定テレメトリー
 ├────────────────────────────────────────────────────────────────────────┤
@@ -428,7 +428,7 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 | 対象OS | ファイル名 | 容量 | ダウンロードリンク (Direct Download) |
 |:---|:---|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.2.0)** | `MonaMinerRTX_Portable_v2.2.0.zip` | 約 69.6 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.0.zip)** |
+| 🪟 **Windows 64bit ポータブル版 (v2.2.1)** | `MonaMinerRTX_Portable_v2.2.1.zip` | 約 69.6 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.1.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
@@ -486,6 +486,10 @@ python node/test_solo_submit.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v2.2.1 (2026-09-30) - ハイブリッド採掘で GPU が遊んでいた問題の修正
+* **⚠ 重要: ハイブリッド (GPU + CPU) で約 44 MH/s しか出なかった問題を修正 (約 281 MH/s に回復)**: 採掘ループが毎回 CPU スレッドの完了を待っていました。CPU の担当範囲は 1 回約 100 ms に調整される一方、GPU の 1 回分は約 15 ms で終わるため、GPU が約 85% の時間アイドルになっていました（v2.2.0 の既定がハイブリッドだったため表面化）。CPU の作業を待たずに走らせ続け、完了したものだけを回収するように変更。GPU のみ・CPU のみのモードは影響ありません（GPU のみ約 279 MH/s、CPU のみ 16 スレッドで約 3.4 MH/s）。
+* CPU の担当範囲の自動調整を、完了した各ジョブ自身のサイズから計算するように修正（同時に複数完了しても範囲が急膨張しません）。
 
 ### v2.2.0 (2026-09-30) - GPU カーネル高速化 (RTX 5080 で約 122 → 約 285 MH/s)
 * **NVIDIA 専用の 4 レーン協調 Lyra2 カーネル `search_lyra2v2_nv`**: 計測の結果、処理時間の約 84% が Lyra2 で、行列（約 1.5 KB/スレッド）が 255 レジスタ + 2.8 KB スタック + 1.3 KB スピルになっていました。1 ハッシュを 4 スレッドで分担し、warp シャッフル（`shfl.sync`）でデータを交換することで、行列を全てレジスタに収容（168 レジスタ・スピルなし）。約 2 倍（約 122 → 約 263 MH/s）。結果は従来カーネルとビット単位で一致します。
@@ -690,7 +694,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v2.2.0.zip # 配布用ZIPアーカイブ (約 69.6MB)
+│   └── MonaMinerRTX_Portable_v2.2.1.zip # 配布用ZIPアーカイブ (約 69.6MB)
 ├── tests/                  # 回帰テスト (unittest): カーネル既知解 / ソロ・Stratum / サービス
 ├── node/                   # Monacoin Core 同梱・ソロ用スクリプト・実ノード検証テスト
 └── app/
