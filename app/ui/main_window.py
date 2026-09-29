@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self._web_snapshot = {}
         self._last_node_info = {}
         self._node_worker = None
-        self.setWindowTitle("MonaMiner RTX / RX v2.1.1 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self.setWindowTitle("MonaMiner RTX / RX v2.2.0 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(920, 640)
         self.resize(1120, 880)
         self.setStyleSheet(MAIN_STYLE)
@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX / RX v2.1.1 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v2.2.0 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -1031,7 +1031,7 @@ class MainWindow(QMainWindow):
             description="Discord Webhook への接続に成功しました！採掘通知を受信できます。",
             color=0x38BDF8,
             fields=[
-                {"name": "バージョン", "value": "v2.1.1", "inline": True},
+                {"name": "バージョン", "value": "v2.2.0", "inline": True},
                 {"name": "ステータス", "value": "Ready", "inline": True}
             ]
         )
@@ -1338,7 +1338,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX / RX v2.1.1 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v2.2.0 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")

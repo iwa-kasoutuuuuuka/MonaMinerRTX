@@ -24,7 +24,7 @@ class DiscordNotifier:
         description: str,
         color: int = 0x00FF88,  # Green default
         fields: Optional[List[Dict[str, Any]]] = None,
-        footer: str = "MonaMinerRTX v2.1.1"
+        footer: str = "MonaMinerRTX v2.2.0"
     ):
         if not self.enabled or not self.webhook_url:
             return
@@ -51,7 +51,7 @@ class DiscordNotifier:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={
                     "Content-Type": "application/json",
-                    "User-Agent": "MonaMinerRTX/2.1.1"
+                    "User-Agent": "MonaMinerRTX/2.2.0"
                 }
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
