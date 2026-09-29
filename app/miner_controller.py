@@ -38,6 +38,10 @@ class SimulatorWorker(QThread):
         self.rejected_shares = 0
         self.blocks_found = 0
 
+    def _log(self, text: str, level: str):
+        # Tag every line so simulated output is never mistaken for real mining
+        self.log_message.emit(f"[SIM] {text}", level)
+
     def run(self):
         hw_info = self.hardware_mgr.device_info
         is_amd = hw_info.get("is_amd", False)
@@ -48,24 +52,26 @@ class SimulatorWorker(QThread):
             "hybrid": f"ハイブリッド ({gpu_label} + CPU {self.cpu_threads} Threads)"
         }.get(self.device_target, "GPU")
 
-        self.log_message.emit(f"★ 採掘エンジン起動: Lyra2REv2 (MonaCoin)", "info")
-        self.log_message.emit(f"使用デバイス: [{dev_desc}]", "info")
-        self.log_message.emit(f"採掘モード: [{'ソロマイニング (Solo)' if self.target_type == 'solo' else 'プールマイニング (Pool)'}]", "info")
+        self._log("⚠ シミュレーションモードです。実際の採掘は行われず、表示されるハッシュレートやブロックはすべてダミーです。"
+                  "実採掘するには「テスト・シミュレーションモード」のチェックを外してください。", "warn")
+        self._log(f"★ 採掘エンジン起動: Lyra2REv2 (MonaCoin)", "info")
+        self._log(f"使用デバイス: [{dev_desc}]", "info")
+        self._log(f"採掘モード: [{'ソロマイニング (Solo)' if self.target_type == 'solo' else 'プールマイニング (Pool)'}]", "info")
 
         # Connection Handshake Simulation
         if self.target_type == "solo":
-            self.log_message.emit(f"Monacoin Core RPC 接続中: http://{self.solo_host}:{self.solo_port}...", "info")
+            self._log(f"Monacoin Core RPC 接続中: http://{self.solo_host}:{self.solo_port}...", "info")
             time.sleep(0.5)
-            self.log_message.emit(f"RPC認証成功: ユーザー '{self.solo_user}'", "success")
-            self.log_message.emit(f"Coinbase受取アドレス設定完了: {self.wallet}", "info")
-            self.log_message.emit(f"getblocktemplate 取得成功: ブロック高 #3,124,560 (Diff: 1.48k)", "success")
+            self._log(f"RPC認証成功: ユーザー '{self.solo_user}'", "success")
+            self._log(f"Coinbase受取アドレス設定完了: {self.wallet}", "info")
+            self._log(f"getblocktemplate 取得成功: ブロック高 #3,124,560 (Diff: 1.48k)", "success")
         else:
-            self.log_message.emit(f"ターゲットプール: {self.pool_url}", "info")
-            self.log_message.emit(f"マイニングアドレス: {self.wallet}.{self.worker}", "info")
+            self._log(f"ターゲットプール: {self.pool_url}", "info")
+            self._log(f"マイニングアドレス: {self.wallet}.{self.worker}", "info")
             time.sleep(0.5)
-            self.log_message.emit(f"Stratumプロトコル接続中... (TCP 接続確立)", "info")
+            self._log(f"Stratumプロトコル接続中... (TCP 接続確立)", "info")
             time.sleep(0.4)
-            self.log_message.emit(f"Stratum pool: 難易度(Diff) 0.052 が設定されました", "info")
+            self._log(f"Stratum pool: 難易度(Diff) 0.052 が設定されました", "info")
 
         # Hardware Initialization
         recs = self.hardware_mgr.get_mode_recommendation()
@@ -73,24 +79,24 @@ class SimulatorWorker(QThread):
 
         if self.device_target in ["gpu", "hybrid"]:
             if is_amd:
-                self.log_message.emit(
+                self._log(
                     f"🔴 {hw_info['name']} ({hw_info['arch_name']}) OpenCL 初期化完了", "success"
                 )
-                self.log_message.emit(
+                self._log(
                     f"⚙️ OpenCL Compute Profile: 推定 {mode_data['target_pwr_w']:.0f}W / WorkSize 最適化を適用",
                     "info"
                 )
             else:
-                self.log_message.emit(
+                self._log(
                     f"⚡ {hw_info['name']} ({hw_info['arch_name']}) 検出・CUDA初期化完了", "success"
                 )
-                self.log_message.emit(
+                self._log(
                     f"⚡ GPU Power: {mode_data['target_pwr_w']:.0f}W / Intensity: {mode_data['intensity']} を適用",
                     "info" if self.mode != "perf" else "warn"
                 )
 
         if self.device_target in ["cpu", "hybrid"]:
-            self.log_message.emit(f"CPU マイニングワーカー初期化: {self.cpu_threads} スレッド稼働 (AVX-512 / AVX2 最適化)", "success")
+            self._log(f"CPU マイニングワーカー初期化: {self.cpu_threads} スレッド稼働 (AVX-512 / AVX2 最適化)", "success")
 
         # Base hashrate calculations
         base_gpu_hr = 0.0
@@ -136,7 +142,7 @@ class SimulatorWorker(QThread):
 
             # Log periodic breakdown every 8 seconds if hybrid
             if self.device_target == "hybrid" and tick % 8 == 0:
-                self.log_message.emit(
+                self._log(
                     f"📊 [内訳] GPU: {gpu_hr:.1f} MH/s | CPU({self.cpu_threads}T): {cpu_hr:.1f} MH/s => 合計: {total_hr:.1f} MH/s",
                     "info"
                 )
@@ -146,13 +152,13 @@ class SimulatorWorker(QThread):
                 # Simulate new network block incoming every ~90s
                 if tick % 40 == 0:
                     current_block += 1
-                    self.log_message.emit(f"📦 ネットワーク新ブロック検知: #{current_block} (テンプレート更新)", "info")
+                    self._log(f"📦 ネットワーク新ブロック検知: #{current_block} (テンプレート更新)", "info")
 
                 # Block finding chance in solo mode (Simulated rare chance)
                 if tick % 60 == 0 and random.random() < 0.25: # Occasional test win
                     self.blocks_found += 1
                     self.shares_update.emit(self.blocks_found, 0)
-                    self.log_message.emit(
+                    self._log(
                         f"🎉🎉🎉【ソロブロック発見!】ブロック #{current_block} を採掘しました！ 報酬: 6.25 MONA を受け取りました！",
                         "success"
                     )
@@ -164,7 +170,7 @@ class SimulatorWorker(QThread):
                         self.accepted_shares += 1
                         diff = round(random.uniform(0.048, 0.065), 3)
                         self.shares_update.emit(self.accepted_shares, self.rejected_shares)
-                        self.log_message.emit(
+                        self._log(
                             f"yes! share #{self.accepted_shares} accepted: {self.accepted_shares}/{self.accepted_shares + self.rejected_shares} "
                             f"({100 * self.accepted_shares / (self.accepted_shares + self.rejected_shares):.1f}%), {total_hr:.1f} MH/s (diff {diff})",
                             "success"
@@ -172,7 +178,7 @@ class SimulatorWorker(QThread):
                     else:
                         self.rejected_shares += 1
                         self.shares_update.emit(self.accepted_shares, self.rejected_shares)
-                        self.log_message.emit(
+                        self._log(
                             f"boooo: share #{self.accepted_shares + self.rejected_shares} rejected (stale)",
                             "error"
                         )

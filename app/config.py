@@ -52,6 +52,9 @@ def validate_mona_address(address: str) -> tuple[bool, str]:
     else:
         return False, "モナコインアドレスは 'M' または 'mona1' で始まる必要があります"
 
+# 2: use_simulator default changed True -> False (v2.2.2)
+CONFIG_VERSION = 2
+
 class ConfigManager:
     def __init__(self, filepath=CONFIG_FILE_PATH):
         self.filepath = filepath
@@ -71,7 +74,7 @@ class ConfigManager:
             "miner_mode": "auto",  # auto, eco, perf, quiet
             "custom_miner_path": "",
             "custom_cpuminer_path": "",
-            "use_simulator": True, # Default to test/simulation mode
+            "use_simulator": False, # Test/simulation mode (fake hashrates, no real mining)
             "auto_start_mining": False,
             # v2.0.0 New Features
             "idle_mining_enabled": False,
@@ -86,7 +89,8 @@ class ConfigManager:
             "selected_gpu_indices": [0],
             "benchmark": {},  # last measured hashrates: {"gpu_mhs", "cpu_mhs_per_thread", ...}
             "power_limit_watts": 0,
-            "target_fan_percent": 0
+            "target_fan_percent": 0,
+            "config_version": CONFIG_VERSION
         }
         self.load()
 
@@ -96,6 +100,11 @@ class ConfigManager:
                 with open(self.filepath, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                     self.data.update(loaded)
+                if loaded.get("config_version", 1) < 2:
+                    # Configs written before v2.2.2 stored the old default use_simulator=True,
+                    # which made users run the fake simulator without noticing.
+                    self.data["use_simulator"] = False
+                self.data["config_version"] = CONFIG_VERSION
             except Exception as e:
                 print(f"[Config] Error loading config: {e}")
 

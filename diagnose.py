@@ -263,7 +263,7 @@ def run_diagnostics():
         print(f"  診断で問題が見つかりました: {', '.join(failures)}")
         print("=" * 60)
         sys.exit(1)
-    print("  すべての診断テストが正常に完了しました！[READY v2.2.1]")
+    print("  すべての診断テストが正常に完了しました！[READY v2.2.2]")
     print("=" * 60)
 
 if __name__ == "__main__":
