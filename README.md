@@ -5,19 +5,19 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.1.0-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.1.0.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.0.zip)
+[![Release](https://img.shields.io/badge/Release-v2.1.1-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.1.1.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.1.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
-**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。v2.1.0では「全ハッシュ段の完全ループアンロール」「高度JIT最適化フラグ」「最適ワークグループ化」によりカーネル演算性能が約1.8倍（+77%）に劇的向上しました。さらに「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しています。**
+**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。GPUカーネルは本物の Lyra2REv2（Blake256 → Keccak → CubeHash → Lyra2 → Skein → CubeHash → BMW）で、Monacoin Core 本体の PoW 判定と一致することを検証済みです（RTX 5080 実測 約 65〜73 MH/s）。さらに「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しています。**
 
 </div>
 
 ---
 
-## 🌟 主な特徴 (v2.1.0)
+## 🌟 主な特徴 (v2.1.1)
 
 1. **🏠 2階層ナビゲーションGUI (かんたん採掘 ＆ 詳細設定・高度なツール)**:
    - 認知的過負荷を解消し、普段使いに必要な「受取アドレス入力」「デバイス・モード選択」「採掘開始」を1画面に集約。
@@ -26,11 +26,11 @@
 
 2. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度JIT最適化)**:
    - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2 カーネルを実行時JITコンパイル。
-   - **全ハッシュ段の完全ループアンロール (`#pragma unroll`)**: 6段アルゴリズム計70以上のループを展開し、分岐オーバーヘッドを完全根絶。
-   - **高度コンパイラ最適化フラグ**: `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math` によりハードウェアMAD/FMA演算器をフル活用。
-   - **最適ワークグループサイズ (128)**: 最新アーキテクチャ（Blackwell / Ada / Ampere / RDNA 3/2）の実行密度を最大化し、実機RTX 5080でスループットが **610 MH/s から 1,080+ MH/s (+77%)** に飛躍。
-   - **Ping-Pong レジスタバッファ化**: カーネル中間バッファを交互利用してレジスタ消費を66%削減。
-   - **PCIe転送の極小化 (ヘッダーキャッシュ)**: 不変ヘッダーの再転送を撤廃し、適応型ディスパッチ制御（~100ms）で無駄掘り（Stale Shares）を根絶。
+   - **本物の Lyra2REv2 実装 (v2.1.1)**: 7段すべて（Blake256 / Keccak256 / CubeHash256 / Lyra2 4x4 / Skein-512→256 / CubeHash256 / BMW256）をリファレンス実装とビット単位で照合。Monacoin Core の regtest ノードが採掘したブロックの Nonce とも一致します（`tests/test_lyra2v2_kernel.py`）。
+   - **実測ハッシュレート**: RTX 5080 で約 **65〜73 MH/s**（単一GPU・バッチ約100万スレッド）。現状のカーネルは正しさを優先した素直な実装で（Lyra2 行列は 1スレッドあたり約1.5KBのプライベート配列）、最適化の余地があります。
+   - **コンパイラ最適化フラグ**: `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math`、ローカルワークグループサイズ 128。
+   - **PCIe転送の極小化 (ヘッダーキャッシュ)**: 不変ヘッダーの再転送を撤廃し、適応型ディスパッチ制御（~100ms）で無駄掘り（Stale Shares）を抑制。
+   - **Multi-GPU**: 全GPUに同時にカーネルを投入し、共有ノンスカーソルで探索範囲の重複を排除。ノンス空間（2³²）を使い切ると extranonce2（プール）／ブロックテンプレート（ソロ）を更新します。
 
 3. **🤖 スマート・アイドル自動採掘 (PC離席時のみ自動スタート)**:
    - Windows API (`GetLastInputInfo`) によりユーザーのキーボード・マウス操作をミリ秒単位で監視。
@@ -71,11 +71,12 @@
     - **プールマイニング (Stratum)**: 国内代表プール（VIPPOOL:8888）へ接続し、安定して少額ずつの報酬を獲得。
     - **ソロマイニング (Monacoin Core RPC)**: ローカルの Monacoin Core (`127.0.0.1:9402`) と直接連携。ブロック発見時に **3.125 MONA + 取引手数料の全額（100%）** を独占獲得。
 
-11. **💻 柔軟な採掘デバイス選択 (GPU / CPU / ハイブリッド同時マイニング)**:
-    - ⚡ **GPU のみ**: RTX 5080（Blackwell）の圧倒的な計算力で採掘（約 170〜220 MH/s）。
-    - 🧠 **CPU のみ**: 多コアCPUを活用した省エネ・補助採掘（約 10〜20 MH/s）。
-    - 🚀 **ハイブリッド (GPU + CPU)**: GPUとCPUを同時にフル稼働させ、マシン全体の限界ハッシュレートを叩き出す最強モード。
-    - スレッド数スライダー & ワンクリックプリセットボタン（`[🍃 16T]` `[⚡ 30T]` `[☕ 8T]`）で微調整が可能。
+11. **💻 採掘デバイス選択 (GPU / CPU / ハイブリッド)**:
+    - ⚡ **GPU のみ**: 内蔵 OpenCL エンジンで採掘します（RTX 5080 で約 65〜73 MH/s）。
+    - 🧠 **CPU のみ**: 内蔵のネイティブ CPU エンジン（`app/miner/native/lyra2re2_cpu.dll`）で、指定スレッド数だけ並列に採掘します。実測は 1 スレッド約 0.15〜0.25 MH/s 程度です。
+    - 🚀 **ハイブリッド (GPU + CPU)**: GPU と CPU が同じ仕事（ヘッダー）を重複なく分担して同時に採掘します（CPU の寄与は GPU の数%です）。
+    - スレッド数スライダー & プリセットボタンで CPU スレッド数を調整できます。
+    - **予想ハッシュレートは実測ベースです**: 「⚙️ 詳細設定 → 🔧 ハードウェア制御」の「📊 ベンチマーク実行」（約10秒）で GPU/CPU の実際の速度を計測し、結果を保存して各プロファイルの「予想」に反映します（未測定のときは「未測定」と表示。省電力/静音は電力比による目安）。
 
 12. **安全設計とデュアル制御（管理者権限対応）**:
     - **一般ユーザー実行時**: 安全のため、Intensity（スレッド並列数）の調整でGPU負荷を制御。
@@ -94,7 +95,7 @@ v2.1.0 では、機能追加による煩雑さを解消するため、画面構�
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [MonaMiner RTX / RX v2.1.0] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
+│ [MonaMiner RTX / RX v2.1.1] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
 ├────────────────────────────────────────────────────────────────────────┤
 │ [ハッシュレート] [消費電力] [推定電気代(1日)] [電力効率] [温度/ファン] [承認シェア]│ ◄ 常時固定テレメトリー
 ├────────────────────────────────────────────────────────────────────────┤
@@ -245,7 +246,7 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
 - 黒いコマンドプロンプト画面が開き、内部で2台の独立した Monacoin Core ノードが自動起動・相互接続されます。
 - 初期化が完了すると、コンソール画面に以下の案内が表示されます：
   ```text
-  ✓ 準備完了！ getblocktemplate 正常応答 (ブロック高: #1)
+  ✓ 準備完了！ getblocktemplate 正常応答 (ブロック高: #61)
   ==================================================================
     GPU ソロマイニング待機状態に入りました！
     MonaMinerRTX GUI の「ソロマイニング」タブで「採掘開始」を押すと、
@@ -255,13 +256,15 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
 
 #### 3. アプリから接続確認
 - MonaMinerRTX の「🏠 ソロマイニング」タブに戻り、**`🔍 ノード接続テスト (RPC Check)`** ボタンを押します。
-- 「✓ 接続成功 [チェーン: REGTEST, ブロック高: #1, 接続ピア: 1 台, IBD中: いいえ]」というポップアップが出れば準備完了です。
+- 「✓ 接続成功 [チェーン: REGTEST, ブロック高: #61, 接続ピア: 1 台, IBD中: いいえ]」というポップアップが出れば準備完了です。
 
 #### 4. 採掘開始とブロック発見
-- ダッシュボード（🏠 かんたん採掘）画面に戻り、受取アドレスに任意のモナコインアドレス（例: ご自身のアドレス）を入力します。
+- ダッシュボード（🏠 かんたん採掘）画面に戻り、受取アドレスに、Regtest 起動スクリプトの最後に表示された **Regtest 用アドレス（`rmona1q...`）** を入力します。
+  - ⚠ メインネット用の `M...` アドレス（既定値を含む）は Regtest ノードでは無効です。その場合はログにエラーを表示して採掘を停止します。
+  - Regtest ノードは高さ 60 未満のブロックを scrypt で検証します（高さ 60 以降が Lyra2REv2）。GPUエンジンは Lyra2REv2 専用なので、起動スクリプトが最初にブロック高 #61 まで自動で掘り進めてから待機状態になります。
 - 画面右上の **`🚀 採掘開始 (Start Mining)`** ボタンを押します。
 - **体験結果**: RTX 5080等のGPUが極低難易度（Diff 1相当）で数秒以内に有効な Nonce を発見し、Monacoin Core へ送信されます。
-- ログ画面に `★ ブロック採掘・承認成功！ (ブロック高 #2, 報酬: 50.00 MONA)` と緑色で表示され、最上部テレメトリーバーの「承認シェア / ブロック」に **`1 blocks`** と即座に加算されます。
+- ログ画面に `★ ブロック採掘・承認成功！ (ブロック高 #62, 報酬: 50.00 MONA)` と緑色で表示され、最上部テレメトリーバーの「承認シェア / ブロック」に **`1 blocks`** と即座に加算されます。
 
 #### 5. テスト環境の終了方法
 - テスト終了時は、起動した黒いコンソール画面で `Ctrl + C` を押すか、`node/stop_nodes.bat` をダブルクリックしてください。ノードが安全に停止します。
@@ -345,9 +348,9 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
   - 本番メインネットの場合: ノード起動後、外部ピアと接続されるまで1〜2分お待ちください。
   - テスト環境の場合: 単体起動ではなく、同梱の `node/start_regtest_solo.bat`（またはアプリの「即座テスト環境起動」ボタン）をご利用ください。自動的に相互接続ピアが構成されます。
 
-#### Q2. 「受取アドレスの検証に失敗しました」と表示される
-- **原因**: 入力されたモナコインアドレスが空か、フォーマットが不正です。
-- **対処法**: メイン画面の「🪙 モナコイン受取アドレス」欄に、有効なモナコインアドレス（レガシー `M...` または SegWit `mona1...`）を入力してください。
+#### Q2. 「受取アドレスがこのノードのネットワークでは無効です」と表示される
+- **原因**: 受取アドレスが空、またはノードのネットワークと合っていません（メインネット: `M...` / `mona1...`、Regtest: `rmona1...`）。
+- **対処法**: メイン画面の「🪙 モナコイン受取アドレス」欄に、接続先ノードに合う有効なアドレスを入力してください。
 
 #### Q3. ソロマイニングでブロックを発見できる確率はどのくらいですか？
 - **解説**: ソロマイニングは確率論（宝くじ）の世界です。例えばネットワーク全体の総ハッシュレートが 1,000 GH/s、ご自身の RTX 5080 が約 200 MH/s の場合、シェア率は約 0.02% となります。
@@ -389,7 +392,7 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 | 対象OS | ファイル名 | 容量 | ダウンロードリンク (Direct Download) |
 |:---|:---|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.1.0 - 超高速版)** | `MonaMinerRTX_Portable_v2.1.0.zip` | 約 46.4 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.0.zip)** |
+| 🪟 **Windows 64bit ポータブル版 (v2.1.1)** | `MonaMinerRTX_Portable_v2.1.1.zip` | 約 69.6 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.1.1.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
@@ -398,7 +401,6 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 > （※ GPU電力上限を直接下げたい場合は、`起動する.bat` を右クリックして「管理者として実行」を選択してください）
 
 * **[📦 GitHub Releases 一覧](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)**
-* **[🏷️ v2.1.0 タグ (ソースコード・バイナリ)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/tree/v2.1.0)**
 
 ---
 
@@ -418,19 +420,74 @@ PyInstaller により、必要なDLL・アプリアイコン・設定ファイ�
 python diagnose.py
 ```
 
-### 診断内容 (8ステップ全自動)
+### 診断内容 (10ステップ全自動・失敗時は終了コード 1)
 1. **Python 実行環境チェック** (3.9以上、OS互換性)
 2. **GUI ライブラリ (PySide6 / Qt6) チェック**
 3. **ハードウェア検知 (NVML & CPU)** (RTX 5080、VRAM、CPU物理/論理コア数、温度、CPU使用率)
 4. **最適化モード判定ロジック チェック** (GPU 250W + CPU 16T 推奨ロジック)
 5. **マイニングプール導通テスト (TCP Handshake)** (VIPPOOL port 8888 への疎通)
 6. **マイナー制御 & シミュレーション動作チェック** (ハイブリッド & ソロマイニングサイクル)
-7. **独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック** (GPU直結演算パイプライン)
-8. **v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック**
+7. **独自内蔵 OpenCL マイナーエンジン & JIT コンパイル チェック** (GPU直結演算パイプライン + **Lyra2REv2 ハッシュの既知解テスト**。コンパイルできるだけでは正しさを保証しないため)
+8. **独自内蔵 CPU マイナーエンジン チェック** (ネイティブ DLL のロード + **Lyra2REv2 ハッシュの既知解テスト** + Nonce スキャン動作確認)
+9. **v2.0.0 新機能 (スマートアイドル・収益性計算・NVML制御・Web監視) チェック**
+10. **Monacoin Core ソロマイニング RPC クライアント & ブロック構築検証** (BIP34 高さ符号化・Merkle・SegWit witness シリアライズ)
+
+### 自動テスト
+
+```powershell
+# GPU/ノード不要 + GPU があれば カーネルの既知解テスト (GPU がなければ自動スキップ)
+python -m unittest discover tests -v
+
+# 実際の Monacoin Core (regtest) で検証するテスト。GPU が見つけたブロックをノードが受理するか確認します
+python node/test_gpu_solo_mine.py 3
+python node/test_solo_submit.py
+```
+
+* `tests/test_lyra2v2_kernel.py`: 各段の出力と最終ハッシュを既知解と照合し、Monacoin Core の regtest マイナーが見つけた実ブロックの Nonce と一致するかを確認します。カーネルの定数を 1 つ変えるだけで失敗します。
+* `node/test_*.py` は使い捨ての一時ディレクトリでノードを起動します（`node/regtest_data` や `mainnet_data` には触れません）。
 
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v2.1.1 (2026-09-29) - 実採掘に必要な修正 (デバッグ)
+* **⚠ 重要: GPU カーネルが Lyra2REv2 になっていなかった問題を修正**:
+  * 旧 `lyra2v2.cl` は 6 段のうち Blake256 の 2 ブロック目・パディング、Lyra2 の行列演算、Skein の UBI、BMW、CubeHash の初期化などが省略された簡易版で、正しいハッシュを計算していませんでした（CubeHash の 2 段目も欠落）。出力の上位ワードがほぼ定数のため、目標値を少し変えるだけで「全 Nonce が有効」か「全 Nonce が無効」に振れ、**プール／メインネットで有効なシェア・ブロックを提出することはできませんでした**。v2.1.0 の「610→1,080 MH/s (+77%)」は存在しない計算に対する数字で、無効です。
+  * 7 段すべてを Monacoin Core と同一のアルゴリズムで実装し直し、リファレンス実装と照合（regtest ノードが採掘した 60 ブロックの Nonce と 109 ビット分一致）。実測は RTX 5080 で約 65〜73 MH/s です。
+  * カーネルの引数は `(header, base_nonce, target_hi, target_lo, found_nonce[16], found_count)` に変更（目標値は上位 64 ビットで比較。1 回の起動で最大 16 個の Nonce を返す）。
+* **ソロマイニング（ブロック組み立て）の修正**:
+  * コインバースの BIP34 高さ符号化が誤っていた問題を修正（高さ 1〜16 は `OP_N`、それ以外は正しい `CScriptNum`。旧実装はメインネットの高さ約 410 万で 3 バイト必要なのに 2 バイトしか出さず、`bad-cb-height` で拒否されました）。
+  * SegWit のコインバース witness（32 バイトの予約値）付きでブロックをシリアライズ。
+  * ターゲットの上位ワードが 0 のとき、誤った代替値 `0x0000ffff` に置き換えていた問題を修正。
+  * 存在しないアドレス（既定のメインネットアドレスを Regtest に使う等）で 0.5 秒ごとに警告を出し続ける問題を、明確なエラー表示＋停止に変更。
+  * Regtest 起動スクリプト: 高さ 60 未満は scrypt 検証のため、Lyra2REv2 区間（#61）まで自動で採掘。Regtest 用受取アドレスを表示。複数ウォレット時の `getnewaddress` 失敗（-19）を修正。
+* **プール（Stratum）マイニングの修正**:
+  * `extranonce2` が一度も更新されず、2³² Nonce を使い切った後は同じ範囲を掘り直していた問題を修正（使い切ると更新）。
+  * プール難易度→ターゲット変換を修正（難易度 ≥ 1 のとき常に固定値 `0x0000FFFF` に置換されていた）。Lyra2REv2 の 2⁸ 倍乗数を適用（`LYRA2REV2_DIFF_MULTIPLIER`。VIPPOOL 実機での確認は未実施）。
+  * 切断・認証拒否を検知して採掘を停止（従来は無言で古いジョブを掘り続けた）。
+* **Multi-GPU**: 従来は GPU を 1 台ずつ直列に実行しており（並列化されておらず）、探索範囲も重複していました。全 GPU に同時投入し、共有ノンスカーソルで重複を排除。
+* **スレッド管理・UI の修正**:
+  * OpenCL ワーカーが初期化失敗・接続失敗・例外で終了しても UI が「採掘中」のまま固まる問題を修正。
+  * 停止直後に QThread が破棄されうる問題（クラッシュの原因）を修正。停止・異常終了時に GPU の電力制限を元に戻すよう変更（従来は下げたまま残り、次回起動時に「定格」として誤認していました）。
+  * Web ダッシュボードの遠隔開始/停止ボタンが一度も動作していなかった問題（Qt 以外のスレッドからの `QTimer.singleShot`）を修正。HTTP スレッドから Qt ウィジェットを直接読む処理も、GUI スレッドで作ったスナップショット参照に変更。
+  * Web ダッシュボードに CSRF 対策（別サイトからの POST を拒否）を追加し、`Access-Control-Allow-Origin: *` を削除。
+  * アイドル検知が PC 稼働 24.9 日超で常に 0 秒になる問題（`GetTickCount` の符号付き戻り値）を修正。
+  * ログ表示の HTML エスケープと行数上限（2,000 行）を追加。OpenCL バッファの解放漏れ（開始/停止のたびにコンテキストがリーク）を修正。
+* **CPU 採掘エンジンを実装**（従来は「CPU のみ」が模擬表示だけで、「ハイブリッド」は GPU のみでした）: sph / Lyra2 リファレンス実装（`app/miner/native/src/`、ライセンスは `NOTICE.txt`）を静的リンクした DLL を ctypes 経由で複数スレッドから呼び出します。GPU と同じ共有ノンスカーソルで分担し、実 Monacoin Core に対して CPU のみ／ハイブリッドとも全ブロックが受理されることを確認済み。再ビルド: `python app/miner/native/build_native.py`（`-fno-strict-aliasing` 必須）。
+* **根拠のないハッシュレート表を廃止**: `GPU_BENCHMARKS`（機種別の予想 MH/s。実測ではなかった）と CPU「0.68 MH/s/スレッド」を削除し、実測ベンチマーク（`app/miner/benchmark.py`）に置き換えました。
+* **プール難易度スケールの自動補正**: Lyra2REv2 の 2⁸ 倍乗数で「低難易度」拒否が 3 回続いた場合、自動で標準スケール（×1）に切り替えます（偽プールで検証。VIPPOOL 実機のアカウントでの確認は未実施）。
+* **`diagnose.py` に CPU エンジンの検証ステップを追加** (10ステップに拡張): ネイティブ DLL のロードと Lyra2REv2 ハッシュ既知解テストを実施（GPU カーネルと同様、コンパイル/ロードできるだけでは正しさを保証しないため）。
+* **テスト追加**: `tests/`（`python -m unittest discover tests`）と、実 Monacoin Core で検証する `node/test_gpu_solo_mine.py` / `node/test_solo_submit.py`。
+* **⛓️ ブロックチェーン同期状況のリアルタイム表示カード**:
+  * ダッシュボード画面（かんたん採掘）に専用の同期ステータスカードを新設。
+  * ネットワークの最新ブロック（`headers`）と、このPCが所持・検証しているブロック（`blocks`）、残りブロック数、検証進捗率（%）をプログレスバー付きで常時リアルタイム表示。
+  * 非同期バックグラウンドポーリングによりGUIの応答性を一切損なわず、手動更新ボタンや「⚡ 本番ノード起動」ボタンも統合。
+* **🪙 ウォレット残高 ＆ 入出金履歴ポップアップ画面 (`WalletHistoryDialog`)**:
+  * 受取アドレス入力欄の横（およびソロマイニング設定画面）に「📜 入出金履歴 (残高確認)」ボタンを新設。
+  * ボタンをクリックするとモーダル画面が開き、現在残高、総受取額、総送金額、過去の全トランザクション（入金/出金区分、数量、日時、承認数、TxHash）を一覧表示。
+  * TxHashのダブルクリックコピー、およびWebエクスプローラー連携に対応。
+* **`diagnose.py` を全11ステップに拡張**:
+  * ウォレットAPI疎通およびノード同期クエリサービスの自動診断ステップを追加。
 
 ### v2.1.0 (2026-09-28)
 * **🎨 GUI 2階層ナビゲーションの全面刷新 (誰でも迷わず3秒で採掘開始)**:
@@ -448,8 +505,7 @@ python diagnose.py
     * `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math` を JIT コンパイル オプションに指定。ハードウェア浮動小数点・整数積和演算器の同時発行と不要な符号ゼロ判定をスキップ。
   * **ワークグループサイズ (Work-Group Size) の最適チューニング**:
     * 最新アーキテクチャ（NVIDIA Blackwell / Ada Lovelace / Ampere および AMD RDNA 3/2）のワープ・ウェーブフロント配置に合わせて、局所ワークグループサイズを `128` に最適化。GPU Occupancy と SM 内レジスタ割り当てを最大化。
-  * **実測ベンチマークの向上**:
-    * 実機 RTX 5080 におけるカーネルハッシュスループットが **610 MH/s から 1,080+ MH/s へ約 1.77倍 (+77%)** に飛躍的向上。
+  * **実測ベンチマークの向上**: ⚠ **訂正 (v2.1.1)**: この数値は誤りでした。当時のカーネルは正しい Lyra2REv2 ではなく、計測値は無効です（詳細は v2.1.1）。
 * **🛡️ ソケット・アドレスバリデーション堅牢化**:
   * カスタムプール手動入力時の動的UI制御と、空白ホスト入力時のフォールバック保護（WinError 10049 根絶）。
 * **🪙 デフォルト受取アドレスの標準搭載**:
@@ -578,7 +634,9 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v2.1.0.zip # 配布用ZIPアーカイブ (約 46.4MB)
+│   └── MonaMinerRTX_Portable_v2.1.1.zip # 配布用ZIPアーカイブ (約 69.6MB)
+├── tests/                  # 回帰テスト (unittest): カーネル既知解 / ソロ・Stratum / サービス
+├── node/                   # Monacoin Core 同梱・ソロ用スクリプト・実ノード検証テスト
 └── app/
     ├── config.py           # 設定管理・アドレスバリデーション (Base58/Bech32)
     ├── hardware.py         # NVML/WMI/CPU ハードウェア検知 & 推奨エンジン
@@ -589,7 +647,10 @@ mona-miner-gui/
     │   ├── notifier.py       # Discord Webhook 非同期通知サービス
     │   ├── gpu_control.py    # ctypes NVML 直接制御 (電力リミット/ファン)
     │   └── web_server.py     # スマホ対応 内蔵超軽量Webダッシュボード
-    ├── miner/              # ⚡ 独自内蔵 OpenCL マイナーエンジン (Multi-GPU対応)
+    ├── miner/              # ⚡ 独自内蔵マイナーエンジン (OpenCL GPU / ネイティブ CPU)
+    │   ├── cpu_backend.py    # ネイティブ CPU スキャナ DLL の ctypes バインディング
+    │   ├── benchmark.py      # 実測ベンチマーク (GPU/CPU)
+    │   ├── native/           # lyra2re2_cpu.dll と C ソース (build_native.py)
     │   ├── opencl_backend.py # Windows OpenCL.dll ctypes 低レベルバインディング
     │   ├── opencl_miner.py   # Multi-GPU 並列マイニングワーカー (QThread)
     │   ├── stratum_client.py # 純Python Stratum v1 プロトコルクライアント

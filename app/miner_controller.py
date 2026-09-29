@@ -96,14 +96,13 @@ class SimulatorWorker(QThread):
         base_gpu_hr = 0.0
         base_gpu_pwr = 0.0
         if self.device_target in ["gpu", "hybrid"]:
-            base_gpu_hr = mode_data.get("est_gpu_hr", 172.0)
+            base_gpu_hr = mode_data.get("est_gpu_hr") or 30.0  # placeholder when not benchmarked (simulation only)
             base_gpu_pwr = mode_data.get("target_pwr_w", 250.0)
 
         base_cpu_hr = 0.0
         base_cpu_pwr = 0.0
         if self.device_target in ["cpu", "hybrid"]:
-            # Roughly 0.65 MH/s per thread for modern Ryzen
-            base_cpu_hr = round(self.cpu_threads * 0.68, 1)
+            base_cpu_hr = round(self.cpu_threads * (self.hardware_mgr.measured.get("cpu_mhs_per_thread") or 0.2), 1)
             base_cpu_pwr = round(self.cpu_threads * 5.0 + 30.0, 1) # ~110W for 16 threads
 
         tick = 0
@@ -289,6 +288,17 @@ class MinerController(QObject):
         self.hardware_mgr = hardware_mgr
         self.worker = None
         self.is_mining = False
+        # Stopped workers whose thread is still winding down. Keeping a reference prevents
+        # Qt from destroying a running QThread (which crashes the process).
+        self._retired_workers = []
+
+    def _attach_worker(self, worker):
+        worker.hashrate_update.connect(self.hashrate_changed)
+        worker.shares_update.connect(self.shares_changed)
+        worker.log_message.connect(self.log_received)
+        worker.finished.connect(self._on_worker_finished)
+        self.worker = worker
+        worker.start()
 
     def start_mining(self, mode: str, target_type: str, device_target: str,
                      pool_url: str, wallet: str, worker: str,
@@ -302,8 +312,6 @@ class MinerController(QObject):
             return
 
         self.is_mining = True
-        status_label = f"採掘中 ({'Solo' if target_type == 'solo' else 'Pool'} - {device_target.upper()})"
-        self.status_changed.emit(status_label)
 
         # Mode configuration lookup
         recs = self.hardware_mgr.get_mode_recommendation()
@@ -318,7 +326,9 @@ class MinerController(QObject):
 
         # Determine whether to run real binary, native OpenCL engine, or simulator
         has_custom = custom_path and os.path.exists(custom_path)
+        target_label = 'Solo' if target_type == 'solo' else 'Pool'
         if not use_sim and has_custom:
+            self.status_changed.emit(f"採掘中 ({target_label} - 外部マイナー)")
             if target_type == "solo":
                 args = [
                     "-a", "lyra2v2",
@@ -337,15 +347,13 @@ class MinerController(QObject):
                     "-p", pool_password or "x",
                     "-i", str(intensity)
                 ]
-            self.worker = ProcessWorker(custom_path, args, self.hardware_mgr)
-            self.worker.hashrate_update.connect(self.hashrate_changed)
-            self.worker.shares_update.connect(self.shares_changed)
-            self.worker.log_message.connect(self.log_received)
-            self.worker.process_exited.connect(self._on_process_exited)
-            self.worker.start()
-        elif not use_sim and device_target in ["gpu", "hybrid"]:
-            # Native Built-in OpenCL Miner Engine (Pure GPU JIT, no external binaries required)
-            self.worker = OpenCLMinerWorker(
+            proc_worker = ProcessWorker(custom_path, args, self.hardware_mgr)
+            proc_worker.process_exited.connect(self._on_process_exited)
+            self._attach_worker(proc_worker)
+        elif not use_sim:
+            # Native built-in engine: OpenCL GPU kernel and/or native CPU scanner, no external binaries
+            self.status_changed.emit(f"採掘中 ({target_label} - {device_target.upper()})")
+            self._attach_worker(OpenCLMinerWorker(
                 mode=mode,
                 target_type=target_type,
                 device_target=device_target,
@@ -360,13 +368,10 @@ class MinerController(QObject):
                 hardware_mgr=self.hardware_mgr,
                 selected_gpu_indices=selected_gpu_indices or [0],
                 pool_password=pool_password or "x"
-            )
-            self.worker.hashrate_update.connect(self.hashrate_changed)
-            self.worker.shares_update.connect(self.shares_changed)
-            self.worker.log_message.connect(self.log_received)
-            self.worker.start()
+            ))
         else:
-            self.worker = SimulatorWorker(
+            self.status_changed.emit(f"シミュレーション中 ({target_label} - {device_target.upper()})")
+            self._attach_worker(SimulatorWorker(
                 mode=mode,
                 target_type=target_type,
                 device_target=device_target,
@@ -379,26 +384,51 @@ class MinerController(QObject):
                 solo_pass=solo_pass,
                 cpu_threads=cpu_threads,
                 hardware_mgr=self.hardware_mgr
-            )
-            self.worker.hashrate_update.connect(self.hashrate_changed)
-            self.worker.shares_update.connect(self.shares_changed)
-            self.worker.log_message.connect(self.log_received)
-            self.worker.start()
+            ))
 
     def stop_mining(self):
         if not self.is_mining:
             return
         self.log_received.emit("採掘停止シグナルを送信しました...", "warn")
-        if self.worker:
-            self.worker.stop()
-            self.worker = None
+        worker, self.worker = self.worker, None
         self.is_mining = False
+        if worker:
+            worker.stop()
+            if worker.isRunning():
+                self._retired_workers.append(worker)
+        self._restore_gpu_state()
         self.status_changed.emit("待機中 (Stopped)")
         self.hashrate_changed.emit(0.0, 0.0, 0.0)
         self.log_received.emit("採掘プロセスを正常に終了しました。", "info")
 
-    def _on_process_exited(self, code: int):
+    def _restore_gpu_state(self):
+        ok, msg = self.hardware_mgr.restore_power_limit()
+        if msg:
+            self.log_received.emit(f"[ハードウェア制御] {msg}", "info" if ok else "warn")
+
+    def _on_worker_finished(self):
+        """The worker thread ended. Unexpected ends (init failure, lost connection, crash) must reset the UI."""
+        worker = self.sender()
+        if worker in self._retired_workers:
+            self._retired_workers.remove(worker)
+            return
+        # sender() is None when a stopped worker was already garbage-collected: not the current one.
+        if worker is None or worker is not self.worker:
+            return
+        self.worker = None
         self.is_mining = False
+        self._restore_gpu_state()
+        self.status_changed.emit("停止 (マイナー終了)")
+        self.hashrate_changed.emit(0.0, 0.0, 0.0)
+        self.log_received.emit("マイナーエンジンが停止しました。詳細は上のログを確認してください。", "warn")
+
+    def _on_process_exited(self, code: int):
+        worker = self.sender()
+        if worker is None or worker is not self.worker:
+            return
+        self.worker = None
+        self.is_mining = False
+        self._restore_gpu_state()
         self.status_changed.emit(f"停止 (終了コード: {code})")
         self.log_received.emit(f"マイナープロセスが終了しました (Code: {code})", "warn")
         self.hashrate_changed.emit(0.0, 0.0, 0.0)

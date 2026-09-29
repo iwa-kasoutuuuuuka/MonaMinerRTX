@@ -15,6 +15,7 @@ echo ※ ブロックチェーンの初期同期（約10GB〜）にはネット�
 echo ※ 同期完了後、MonaMinerRTX で完全な独立ソロマイニングが可能になります。
 echo.
 echo ノードを起動しています...
+if not exist "%~dp0mainnet_data" mkdir "%~dp0mainnet_data"
 bin\monacoind.exe -conf="%~dp0monacoin.conf" -datadir="%~dp0mainnet_data"
 
 if %errorlevel% neq 0 (

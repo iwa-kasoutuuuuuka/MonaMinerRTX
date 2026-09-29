@@ -1,8 +1,10 @@
+import html
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QTextEdit
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QTextCursor, QColor
+from PySide6.QtGui import QTextCursor
 
 class MetricCard(QFrame):
     def __init__(self, label: str, default_val: str = "--", unit: str = ""):
@@ -64,13 +66,17 @@ class ModeCard(QPushButton):
         layout.addStretch()
 
         footer_layout = QHBoxLayout()
-        lbl_hr_tag = QLabel(f"予想: <b style='color:#38bdf8;'>{est_hr}</b>")
-        lbl_hr_tag.setWordWrap(True)
-        lbl_hr_tag.setStyleSheet("font-size: 11px; color: #cbd5e1;")
-        footer_layout.addWidget(lbl_hr_tag)
+        self.lbl_hr_tag = QLabel()
+        self.lbl_hr_tag.setWordWrap(True)
+        self.lbl_hr_tag.setStyleSheet("font-size: 11px; color: #cbd5e1;")
+        self.set_est_hashrate(est_hr)
+        footer_layout.addWidget(self.lbl_hr_tag)
         layout.addLayout(footer_layout)
 
         self.clicked.connect(lambda: self.selected.emit(self.mode_key))
+
+    def set_est_hashrate(self, est_hr: str):
+        self.lbl_hr_tag.setText(f"予想: <b style='color:#38bdf8;'>{html.escape(est_hr)}</b>")
 
 class LogConsole(QWidget):
     def __init__(self):
@@ -95,6 +101,7 @@ class LogConsole(QWidget):
         self.text_edit.setObjectName("log_view")
         self.text_edit.setReadOnly(True)
         self.text_edit.setMinimumHeight(130)
+        self.text_edit.document().setMaximumBlockCount(2000)  # a 24/7 miner must not grow the log without bound
         layout.addWidget(self.text_edit)
 
     def append_log(self, text: str, level: str = "info"):
@@ -105,7 +112,7 @@ class LogConsole(QWidget):
             "error": "#f87171"
         }
         color = color_map.get(level, "#94a3b8")
-        html_msg = f"<span style='color: {color};'>{text}</span>"
+        html_msg = f"<span style='color: {color};'>{html.escape(str(text))}</span>"
         self.text_edit.append(html_msg)
         self.text_edit.moveCursor(QTextCursor.End)
 

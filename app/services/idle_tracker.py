@@ -1,5 +1,4 @@
 import sys
-import time
 import ctypes
 from PySide6.QtCore import QObject, Signal, QTimer
 
@@ -49,9 +48,11 @@ class IdleTracker(QObject):
             lii = LASTINPUTINFO()
             lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
             if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-                # GetTickCount() returns milliseconds since system startup
-                millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
-                return max(0.0, millis / 1000.0)
+                # GetTickCount() returns milliseconds since system startup as a 32-bit value that
+                # ctypes hands back as a signed int (negative after ~24.9 days of uptime) and that
+                # wraps at ~49.7 days: do the subtraction modulo 2^32.
+                millis = (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) & 0xFFFFFFFF
+                return millis / 1000.0
         except Exception:
             pass
         return 0.0

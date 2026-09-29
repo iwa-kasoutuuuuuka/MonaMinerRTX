@@ -104,11 +104,14 @@ Anti-Gravity 環境におけるエラーの発生や予期しない挙動に対�
 
 1. **外部実行ファイル依存ゼロの維持**:
    - 原則としてサードパーティ製マイナー（`ccminer.exe` や `wildrig.exe`）の同梱・必須化を行わず、Windows標準の `OpenCL.dll` + `ctypes` による独自内蔵エンジンで完全動作させる。
-2. **JIT OpenCL カーネルの最適化維持**:
+2. **JIT OpenCL カーネルは「正しさ」を先に検証する**:
+   - ハッシュ関数を変更・最適化したら、必ず `python -m unittest discover tests` と `python diagnose.py` の既知解テストを通すこと。「コンパイルできる」「ハッシュレートが出る」は正しさの証拠にならない（v2.1.0 では間違ったカーネルが 1,080 MH/s と表示されていた）。
+   - PoW の真値は Monacoin Core。実ブロックで確認するには `node/test_gpu_solo_mine.py`（regtest は高さ 60 未満が scrypt、60 以降が Lyra2REv2）。
+3. **JIT OpenCL カーネルの最適化維持**:
    - ループ処理には `#pragma unroll` を適用し、ハードウェアALU稼働率を最大化する。
    - コンパイラオプションには `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math` を標準指定する。
    - 局所ワークグループサイズは `128` を標準とし、各GPUアーキテクチャの占有率（Occupancy）を崩さない。
-3. **非同期アーキテクチャの遵守**:
+4. **非同期アーキテクチャの遵守**:
    - 採掘ループ（`OpenCLMinerWorker`）、Stratum通信（`StratumClient`）、Web監視（`WebMonitoringServer`）、アイドル検知（`IdleTracker`）はすべてQtメインスレッドから分離（QThread / threading.Thread）し、GUIの応答性を絶対に損なわない。
-4. **ポータブル版パッケージの一貫性**:
+5. **ポータブル版パッケージの一貫性**:
    - バージョンアップ時は必ず `main.py`, `version_info.txt`, `app/ui/main_window.py`, `build_portable.py`, `README.md` のバージョン表記を完全同期させ、配布用ZIP（`dist/MonaMinerRTX_Portable_v*.zip`）をビルド＆同梱すること。

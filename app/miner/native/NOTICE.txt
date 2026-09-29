@@ -1,0 +1,9 @@
+The CPU miner (src/) uses third-party code, redistributed under its original terms:
+
+* sph library (src/sha3/*: Blake, BMW, CubeHash, Keccak, Skein) - Copyright (c) 2007-2010 Projet RNRT SAPHIR.
+  MIT-style permissive license (full text at the top of each source file).
+* Lyra2 reference code (src/Lyra2.*, src/Sponge.*) - The Lyra PHC team, placed in the public domain.
+  Via the Vertcoin / "lyra2re-hash-python" packaging (BSD licensed wrapper code by James Lovejoy).
+
+The library must be compiled with -fno-strict-aliasing (see build_native.py); the sph/Lyra2 code
+violates strict aliasing and gives wrong hashes when built with plain -O2.

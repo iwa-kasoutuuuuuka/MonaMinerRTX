@@ -27,6 +27,8 @@ DEFAULT_POOLS = [
 # SegWit Bech32 starts with 'mona1' (usually 42 chars)
 BASE58_REGEX = re.compile(r"^M[1-9A-HJ-NP-Za-km-z]{32,34}$")
 BECH32_REGEX = re.compile(r"^mona1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38,62}$")
+# Regtest / testnet bech32 (used with the built-in regtest environment; the node validates them for real)
+BECH32_TEST_REGEX = re.compile(r"^[rt]mona1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38,62}$")
 
 def validate_mona_address(address: str) -> tuple[bool, str]:
     if not address or not address.strip():
@@ -42,6 +44,11 @@ def validate_mona_address(address: str) -> tuple[bool, str]:
             return True, "有効なSegWitアドレス (Bech32) です"
         else:
             return False, "不正なSegWitアドレス形式です"
+    elif addr.startswith(("rmona1", "tmona1")):
+        if BECH32_TEST_REGEX.match(addr):
+            return True, "Regtest/テストネット用アドレス (Bech32) です (本番メインネットでは使用できません)"
+        else:
+            return False, "不正なRegtest/テストネット用アドレス形式です"
     else:
         return False, "モナコインアドレスは 'M' または 'mona1' で始まる必要があります"
 
@@ -77,6 +84,7 @@ class ConfigManager:
             "web_dashboard_port": 8888,
             "multi_gpu_enabled": False,
             "selected_gpu_indices": [0],
+            "benchmark": {},  # last measured hashrates: {"gpu_mhs", "cpu_mhs_per_thread", ...}
             "power_limit_watts": 0,
             "target_fan_percent": 0
         }

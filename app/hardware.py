@@ -10,77 +10,6 @@ try:
 except ImportError:
     HAS_PYNVML = False
 
-GPU_BENCHMARKS = [
-    # (name_keyword, eco_hr, perf_hr, quiet_hr)
-    ("5090", 250.0, 320.0, 130.0),
-    ("5080", 172.0, 218.0, 88.0),
-    ("5070 ti", 125.0, 160.0, 65.0),
-    ("5070", 105.0, 135.0, 55.0),
-    ("4090", 170.0, 215.0, 85.0),
-    ("4080 super", 125.0, 155.0, 62.0),
-    ("4080", 120.0, 150.0, 60.0),
-    ("4070 ti super", 100.0, 130.0, 50.0),
-    ("4070 ti", 95.0, 120.0, 48.0),
-    ("4070 super", 85.0, 110.0, 44.0),
-    ("4070", 75.0, 95.0, 38.0),
-    ("4060 ti", 55.0, 70.0, 28.0),
-    ("4060", 42.0, 54.0, 22.0),
-    ("3090 ti", 115.0, 140.0, 58.0),
-    ("3090", 105.0, 130.0, 52.0),
-    ("3080 ti", 100.0, 125.0, 50.0),
-    ("3080", 90.0, 110.0, 45.0),
-    ("3070 ti", 70.0, 85.0, 35.0),
-    ("3070", 62.0, 76.0, 31.0),
-    ("3060 ti", 55.0, 68.0, 28.0),
-    ("3060", 40.0, 50.0, 20.0),
-    ("3050", 25.0, 32.0, 13.0),
-    ("2080 ti", 65.0, 80.0, 32.0),
-    ("2080 super", 55.0, 68.0, 28.0),
-    ("2080", 50.0, 62.0, 25.0),
-    ("2070 super", 48.0, 58.0, 24.0),
-    ("2070", 42.0, 52.0, 21.0),
-    ("2060 super", 40.0, 49.0, 20.0),
-    ("2060", 35.0, 43.0, 18.0),
-    ("1660 ti", 28.0, 35.0, 14.0),
-    ("1660 super", 27.0, 34.0, 14.0),
-    ("1660", 24.0, 30.0, 12.0),
-    ("1650", 16.0, 20.0, 8.0),
-    ("1080 ti", 58.0, 72.0, 29.0),
-    ("1080", 44.0, 54.0, 22.0),
-    ("1070 ti", 42.0, 52.0, 21.0),
-    ("1070", 35.0, 44.0, 18.0),
-    ("1060", 22.0, 28.0, 11.0),
-    ("1050 ti", 12.0, 15.0, 6.0),
-    # AMD Radeon Models (OpenCL / Lyra2REv2)
-    ("7900 xtx", 135.0, 175.0, 70.0),
-    ("7900 xt", 115.0, 150.0, 60.0),
-    ("7900 gre", 100.0, 130.0, 50.0),
-    ("7800 xt", 85.0, 110.0, 45.0),
-    ("7700 xt", 75.0, 95.0, 38.0),
-    ("7600 xt", 48.0, 62.0, 25.0),
-    ("7600", 42.0, 54.0, 22.0),
-    ("6950 xt", 95.0, 125.0, 50.0),
-    ("6900 xt", 90.0, 118.0, 47.0),
-    ("6800 xt", 85.0, 110.0, 44.0),
-    ("6800", 72.0, 92.0, 36.0),
-    ("6750 xt", 62.0, 80.0, 32.0),
-    ("6700 xt", 58.0, 75.0, 30.0),
-    ("6650 xt", 42.0, 54.0, 22.0),
-    ("6600 xt", 38.0, 48.0, 20.0),
-    ("6600", 32.0, 40.0, 16.0),
-    ("5700 xt", 42.0, 54.0, 22.0),
-    ("5700", 36.0, 46.0, 18.0),
-    ("5600 xt", 30.0, 38.0, 15.0),
-    ("radeon vii", 70.0, 90.0, 35.0),
-    ("vega 64", 38.0, 48.0, 20.0),
-    ("vega 56", 32.0, 40.0, 16.0),
-    ("rx 590", 24.0, 30.0, 12.0),
-    ("rx 580", 22.0, 28.0, 11.0),
-    ("rx 570", 18.0, 24.0, 9.0),
-    ("rx 480", 18.0, 24.0, 9.0),
-    ("rx 470", 15.0, 20.0, 8.0),
-]
-
 AMD_DEFAULT_TDP = [
     ("7900 xtx", 355.0, 250.0),
     ("7900 xt", 315.0, 220.0),
@@ -184,6 +113,9 @@ class HardwareManager:
             "physical_cores": psutil.cpu_count(logical=False) or 2,
         }
         self.is_admin = is_admin()
+        self._limit_before_mining_mw = None  # power limit to restore once mining stops
+        # Real hashrates from the built-in benchmark (app/miner/benchmark.py); None = not measured yet
+        self.measured = {"gpu_mhs": None, "cpu_mhs_per_thread": None}
         self.init_nvml()
 
     def init_nvml(self):
@@ -294,7 +226,11 @@ class HardwareManager:
             pass
 
         try:
-            pwr_limit = pynvml.nvmlDeviceGetPowerManagementLimit(h) / 1000.0
+            # The *default* limit: the currently applied one may still be a leftover of an earlier run.
+            try:
+                pwr_limit = pynvml.nvmlDeviceGetPowerManagementDefaultLimit(h) / 1000.0
+            except Exception:
+                pwr_limit = pynvml.nvmlDeviceGetPowerManagementLimit(h) / 1000.0
             pwr_range = [x / 1000.0 for x in pynvml.nvmlDeviceGetPowerManagementLimitConstraints(h)]
             self.device_info["pwr_default_w"] = pwr_limit
             self.device_info["pwr_min_w"] = pwr_range[0]
@@ -402,37 +338,6 @@ class HardwareManager:
         pwr_min = info["pwr_min_w"]
         pwr_max = info["pwr_max_w"]
 
-        # 1. Estimate base GPU hashrates (Eco, Perf, Quiet)
-        name_lower = name.lower()
-        match = None
-        for kw, eco, perf, quiet in GPU_BENCHMARKS:
-            if kw in name_lower:
-                match = (eco, perf, quiet)
-                break
-
-        if match:
-            eco_gpu_hr, perf_gpu_hr, quiet_gpu_hr = match
-        elif has_gpu:
-            if is_amd:
-                base_pwr = pwr_def if pwr_def > 0 else 200.0
-                perf_gpu_hr = round(base_pwr * 0.35, 1)
-                eco_gpu_hr = round(perf_gpu_hr * 0.78, 1)
-                quiet_gpu_hr = round(perf_gpu_hr * 0.40, 1)
-            else:
-                major, minor = compute_cap
-                eff = 0.58 if major >= 12 else (0.45 if major >= 8 and minor >= 9 else (0.30 if major >= 8 else 0.22))
-                base_pwr = pwr_def if pwr_def > 0 else 180.0
-                perf_gpu_hr = round(base_pwr * eff, 1)
-                eco_gpu_hr = round(perf_gpu_hr * 0.78, 1)
-                quiet_gpu_hr = round(perf_gpu_hr * 0.40, 1)
-        else:
-            eco_gpu_hr, perf_gpu_hr, quiet_gpu_hr = 0.0, 0.0, 0.0
-
-        if is_laptop:
-            eco_gpu_hr = round(eco_gpu_hr * 0.80, 1)
-            perf_gpu_hr = round(perf_gpu_hr * 0.80, 1)
-            quiet_gpu_hr = round(quiet_gpu_hr * 0.80, 1)
-
         # 2. Determine power limits in Watts
         if pwr_def > 0:
             c_min = pwr_min if pwr_min > 0 else round(pwr_def * 0.65)
@@ -444,6 +349,17 @@ class HardwareManager:
             pwr_eco = 150.0
             pwr_perf = 220.0
             pwr_quiet = 100.0
+
+        # Hashrate estimates come from the benchmark only. Power-limited profiles are scaled by their
+        # power ratio, a rough rule of thumb (not measured).
+        gpu_measured = self.measured.get("gpu_mhs") if has_gpu else None
+        if gpu_measured:
+            ref_pwr = pwr_perf if pwr_perf > 0 else 1.0
+            perf_gpu_hr = round(gpu_measured, 1)
+            eco_gpu_hr = round(gpu_measured * min(1.0, pwr_eco / ref_pwr), 1)
+            quiet_gpu_hr = round(gpu_measured * min(1.0, pwr_quiet / ref_pwr), 1)
+        else:
+            eco_gpu_hr = perf_gpu_hr = quiet_gpu_hr = 0.0
 
         # Intensity
         major = compute_cap[0]
@@ -463,9 +379,17 @@ class HardwareManager:
         cpu_threads_perf = max(1, cpu_log - 2) if cpu_log > 4 else cpu_log
         cpu_threads_quiet = max(1, cpu_phys // 2)
 
-        cpu_hr_eco = round(cpu_threads_eco * 0.68, 1)
-        cpu_hr_perf = round(cpu_threads_perf * 0.68, 1)
-        cpu_hr_quiet = round(cpu_threads_quiet * 0.68, 1)
+        per_thread = self.measured.get("cpu_mhs_per_thread") or 0.0
+        cpu_hr_eco = round(cpu_threads_eco * per_thread, 2)
+        cpu_hr_perf = round(cpu_threads_perf * per_thread, 2)
+        cpu_hr_quiet = round(cpu_threads_quiet * per_thread, 2)
+
+        def est_text(gpu_hr: float, cpu_hr: float) -> str:
+            if (has_gpu and gpu_hr <= 0) or cpu_hr <= 0:
+                return "未測定 (詳細設定の「ベンチマーク」で計測)"
+            if has_gpu:
+                return f"GPU ~{gpu_hr:.0f} + CPU ~{cpu_hr:.1f} => 計 ~{gpu_hr + cpu_hr:.0f} MH/s (実測ベース)"
+            return f"CPU ~{cpu_hr:.1f} MH/s (実測ベース)"
 
         modes = {
             "eco": {
@@ -476,7 +400,7 @@ class HardwareManager:
                 "cpu_threads": cpu_threads_eco,
                 "badge": "推奨 (低発熱・高Hash/W)",
                 "description": f"GPU: {pwr_eco:.0f}W (電圧抑制) / CPU: {cpu_threads_eco}スレッド (物理コア優先)。SMT競合を回避し、マシン全体の電力効率を最大化します。",
-                "est_hashrate": f"GPU ~{eco_gpu_hr:.0f} + CPU ~{cpu_hr_eco:.0f} => 計 ~{eco_gpu_hr + cpu_hr_eco:.0f} MH/s" if has_gpu else f"CPU ~{cpu_hr_eco:.0f} MH/s",
+                "est_hashrate": est_text(eco_gpu_hr, cpu_hr_eco),
                 "est_efficiency": "最高ワットパフォーマンス"
             },
             "perf": {
@@ -487,7 +411,7 @@ class HardwareManager:
                 "cpu_threads": cpu_threads_perf,
                 "badge": f"最大性能 ({pwr_perf:.0f}W + {cpu_threads_perf}T フルパワー)",
                 "description": f"GPU: {pwr_perf:.0f}W定格全開 / CPU: {cpu_threads_perf}スレッド (OS用2スレッド確保)。GPUとCPUの全能力を解き放つ極限ハッシュレート構成です。",
-                "est_hashrate": f"GPU ~{perf_gpu_hr:.0f} + CPU ~{cpu_hr_perf:.0f} => 計 ~{perf_gpu_hr + cpu_hr_perf:.0f} MH/s" if has_gpu else f"CPU ~{cpu_hr_perf:.0f} MH/s",
+                "est_hashrate": est_text(perf_gpu_hr, cpu_hr_perf),
                 "est_efficiency": "最大採掘量最優先"
             },
             "quiet": {
@@ -498,7 +422,7 @@ class HardwareManager:
                 "cpu_threads": cpu_threads_quiet,
                 "badge": "静音・軽作業と両立",
                 "description": f"GPU使用率30〜40% / CPU: {cpu_threads_quiet}スレッド (25%低負荷)。日常のPC操作や動画視聴を一切妨げずに裏で静かに採掘します。",
-                "est_hashrate": f"GPU ~{quiet_gpu_hr:.0f} + CPU ~{cpu_hr_quiet:.0f} => 計 ~{quiet_gpu_hr + cpu_hr_quiet:.0f} MH/s" if has_gpu else f"CPU ~{cpu_hr_quiet:.0f} MH/s",
+                "est_hashrate": est_text(quiet_gpu_hr, cpu_hr_quiet),
                 "est_efficiency": "低負荷・静音重視"
             }
         }
@@ -558,12 +482,29 @@ class HardwareManager:
         target_mw = int(target_w * 1000)
 
         try:
+            if self._limit_before_mining_mw is None:
+                self._limit_before_mining_mw = pynvml.nvmlDeviceGetPowerManagementLimit(self.device_handle)
             pynvml.nvmlDeviceSetPowerManagementLimit(self.device_handle, target_mw)
             return True, f"Power Limit を {target_w:.0f}W に設定しました。"
         except pynvml.NVMLError_NoPermission:
             return False, "権限不足: Windowsの管理者権限で実行されていません。"
         except Exception as e:
             return False, f"Power Limit 設定エラー: {e}"
+
+    def set_measured(self, gpu_mhs=None, cpu_mhs_per_thread=None):
+        self.measured = {"gpu_mhs": gpu_mhs or None, "cpu_mhs_per_thread": cpu_mhs_per_thread or None}
+
+    def restore_power_limit(self) -> tuple[bool, str]:
+        """Puts the GPU power limit back to what it was before mining started (no-op if never changed)."""
+        if self._limit_before_mining_mw is None or not self.has_nvml or not self.device_handle:
+            return True, ""
+        original_mw = self._limit_before_mining_mw
+        self._limit_before_mining_mw = None
+        try:
+            pynvml.nvmlDeviceSetPowerManagementLimit(self.device_handle, original_mw)
+            return True, f"Power Limit を元の {original_mw / 1000:.0f}W に戻しました。"
+        except Exception as e:
+            return False, f"Power Limit の復元に失敗しました: {e}"
 
     def shutdown(self):
         if self.has_nvml:

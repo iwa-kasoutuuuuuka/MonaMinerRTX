@@ -7,12 +7,12 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v2.1.0.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v2.1.1.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
 
 def build():
     print("=" * 60)
-    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.1.0")
+    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.1.1")
     print("=" * 60)
 
     # 1. Clean previous build
@@ -26,6 +26,10 @@ def build():
     # 2. Run PyInstaller
     print("\n[2/5] PyInstaller によるコンパイル実行中 (PySide6 + NVML + 内蔵OpenCL + v2サービス 同梱)...")
     kernel_src = os.path.join(PROJECT_DIR, "app", "miner", "kernels", "lyra2v2.cl")
+    cpu_dll = os.path.join(PROJECT_DIR, "app", "miner", "native", "lyra2re2_cpu.dll")
+    if not os.path.exists(cpu_dll):
+        print("[エラー] app/miner/native/lyra2re2_cpu.dll がありません。python app/miner/native/build_native.py を実行してください。")
+        sys.exit(1)
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name=MonaMinerRTX",
@@ -45,13 +49,19 @@ def build():
         "--hidden-import=app.miner.opencl_miner",
         "--hidden-import=app.miner.stratum_client",
         "--hidden-import=app.miner.rpc_solo_client",
+        "--hidden-import=app.miner.cpu_backend",
+        "--hidden-import=app.miner.benchmark",
         "--hidden-import=app.services",
         "--hidden-import=app.services.idle_tracker",
         "--hidden-import=app.services.profit_calc",
         "--hidden-import=app.services.notifier",
         "--hidden-import=app.services.gpu_control",
         "--hidden-import=app.services.web_server",
+        "--hidden-import=app.services.wallet_service",
+        "--hidden-import=app.services.node_service",
+        "--hidden-import=app.ui.wallet_dialog",
         f"--add-data={kernel_src};app/miner/kernels",
+        f"--add-binary={cpu_dll};app/miner/native",
         "--distpath", DIST_DIR,
         "--workpath", os.path.join(PROJECT_DIR, "build"),
         os.path.join(PROJECT_DIR, "main.py")
@@ -89,6 +99,12 @@ def build():
             shutil.rmtree(dst_kernels)
         shutil.copytree(src_kernels, dst_kernels)
         print("  - コピー: app/miner/kernels/ (lyra2v2.cl)")
+
+    # Copy the native CPU miner next to the executable as well (loaded from app/miner/native)
+    dst_native = os.path.join(OUTPUT_FOLDER, "app", "miner", "native")
+    os.makedirs(dst_native, exist_ok=True)
+    shutil.copy2(cpu_dll, dst_native)
+    print("  - コピー: app/miner/native/lyra2re2_cpu.dll")
 
     # Copy node directory (scripts, conf, bin if present, excluding large data dirs)
     src_node = os.path.join(PROJECT_DIR, "node")

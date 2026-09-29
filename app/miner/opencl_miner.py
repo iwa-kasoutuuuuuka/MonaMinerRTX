@@ -7,14 +7,25 @@ Runs in a background QThread and emits live telemetry signals.
 import os
 import sys
 import time
-import struct
-import ctypes
-from ctypes import c_uint, byref
+from concurrent.futures import ThreadPoolExecutor
+from ctypes import c_uint
 from PySide6.QtCore import QThread, Signal
 
-from app.miner.opencl_backend import OpenCLBackend, OpenCLContext, OpenCLException
-from app.miner.stratum_client import StratumClient, StratumJob, diff_to_target
+from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
+from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
+from app.miner.stratum_client import StratumClient, StratumJob, target_words
 from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
+
+NONCE_SPACE = 1 << 32       # a header has 2^32 nonces; after that the work must change
+MAX_FOUND = 16              # capacity of the kernel's found_nonce buffer
+TARGET_DISPATCH_S = 0.10    # adaptive batching aims at ~100 ms per kernel launch
+MAX_BATCH = 4194304
+CPU_MIN_CHUNK = 64          # nonces per CPU thread and launch (adapted to ~100 ms)
+CPU_MAX_CHUNK = 1 << 20
+CPU_WATT_PER_THREAD = 5.0   # rough estimate, only used when no power sensor is available
+POOL_DEFAULT_HOST = "stratum1.vippool.net"
+POOL_DEFAULT_PORT = 8888
+
 
 class OpenCLMinerWorker(QThread):
     hashrate_update = Signal(float, float, float) # hashrate_mhs, power_w, eff_mhw
@@ -49,18 +60,71 @@ class OpenCLMinerWorker(QThread):
         self.stratum: StratumClient = None
         self.solo_client: RpcSoloClient = None
         self.current_template: SoloBlockTemplate = None
-        self.ctx_list = [] # List of (OpenCLContext, kernel, dev_info, buffers, base_nonce, batch_size)
+        self.ctx_list = [] # one dict per GPU: context, kernel, buffers, local_wg, batch_size, ...
+        self.use_gpu = device_target in ("gpu", "hybrid")
+        self.use_cpu = device_target in ("cpu", "hybrid")
+        self.cpu_threads = max(1, int(cpu_threads or 1))
+        self._cpu_pool = None
+        self._cpu_chunk = 512
 
+    # ------------------------------------------------------------------ thread entry
     def run(self):
-        self.log_message.emit("★ 独自内蔵 OpenCL マイナーエンジン起動 (Lyra2REv2 Multi-GPU)", "info")
+        try:
+            if self._init_devices() and self._connect():
+                self._mine_loop()
+        except Exception as e:
+            self.log_message.emit(f"マイナーエンジンで予期しないエラーが発生しました: {e}", "error")
+        finally:
+            self._cleanup()
+
+    def _sleep(self, seconds: float):
+        """Sleep in short slices so stop() is honoured promptly."""
+        end = time.monotonic() + seconds
+        while self._running and time.monotonic() < end:
+            time.sleep(min(0.05, max(0.0, end - time.monotonic())))
+
+    def _kernel_path(self) -> str:
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+            kernel_path = os.path.join(base_dir, "app", "miner", "kernels", "lyra2v2.cl")
+            if not os.path.exists(kernel_path):
+                kernel_path = os.path.join(getattr(sys, '_MEIPASS', base_dir), "app", "miner", "kernels", "lyra2v2.cl")
+            return kernel_path
+        return os.path.join(os.path.dirname(__file__), "kernels", "lyra2v2.cl")
+
+    def _mode_data(self) -> dict:
+        recs = self.hardware_mgr.get_mode_recommendation()
+        return recs["modes"].get(self.mode, recs["modes"]["eco"])
+
+    # ------------------------------------------------------------------ setup
+    def _init_devices(self) -> bool:
+        devices = {"gpu": "GPU", "cpu": "CPU", "hybrid": "GPU + CPU"}.get(self.device_target, "GPU")
+        self.log_message.emit(f"★ 独自内蔵マイナーエンジン起動 (Lyra2REv2 / {devices})", "info")
+        if self.use_cpu:
+            try:
+                CpuBackend.load()
+                self._cpu_pool = ThreadPoolExecutor(max_workers=self.cpu_threads)
+                self.log_message.emit(f"CPU マイニングワーカー初期化: {self.cpu_threads} スレッド", "success")
+            except CpuBackendUnavailable as e:
+                self.log_message.emit(f"CPU エンジンを初期化できません: {e}", "error")
+                if not self.use_gpu:
+                    return False
+                self.use_cpu = False
+        if self.use_gpu:
+            if not self._init_gpus():
+                if not self.use_cpu:
+                    return False
+                self.log_message.emit("GPU を使用できないため CPU のみで採掘します。", "warn")
+        return True
+
+    def _init_gpus(self) -> bool:
         self.log_message.emit(f"ターゲット: [{'ソロ (Solo RPC)' if self.target_type == 'solo' else 'プール (Stratum)'}]", "info")
 
-        # 1. Discover all GPUs
         try:
             all_devices = OpenCLBackend.get_all_gpu_devices()
             if not all_devices:
                 self.log_message.emit("利用可能な OpenCL GPU が見つかりません。", "error")
-                return
+                return False
 
             target_devs = [d for d in all_devices if d["global_index"] in self.selected_gpu_indices]
             if not target_devs:
@@ -68,60 +132,36 @@ class OpenCLMinerWorker(QThread):
 
             self.log_message.emit(f"採掘稼働 GPU 台数: {len(target_devs)} 台", "success")
 
-            # 2. Kernel source
-            if getattr(sys, 'frozen', False):
-                base_dir = os.path.dirname(sys.executable)
-                kernel_path = os.path.join(base_dir, "app", "miner", "kernels", "lyra2v2.cl")
-                if not os.path.exists(kernel_path):
-                    kernel_path = os.path.join(getattr(sys, '_MEIPASS', base_dir), "app", "miner", "kernels", "lyra2v2.cl")
-            else:
-                kernel_path = os.path.join(os.path.dirname(__file__), "kernels", "lyra2v2.cl")
-
-            with open(kernel_path, "r", encoding="utf-8") as f:
+            with open(self._kernel_path(), "r", encoding="utf-8") as f:
                 kernel_src = f.read()
 
-            # 3. Setup context for each GPU
-            recs = self.hardware_mgr.get_mode_recommendation()
-            mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
-            intensity = mode_data.get("intensity", 20)
+            intensity = self._mode_data().get("intensity", 20)
 
-            for idx, d in enumerate(target_devs):
+            for d in target_devs:
                 self.log_message.emit(f"GPU #{d['global_index']} 初期化: {d['name']} ({d['platform_name']})", "info")
                 ctx = OpenCLContext(d["platform_id"], d["id"])
+                # Registered before the build so a failing JIT compile still releases the context.
+                item = {"ctx": ctx, "dev": d, "last_key": None}
+                self.ctx_list.append(item)
+
                 ctx.build_program(kernel_src, options="-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math")
-                kernel = ctx.get_kernel("search_lyra2v2")
+                item["kernel"] = ctx.get_kernel("search_lyra2v2")
 
-                # Work-group size: 128 offers superior occupancy across NVIDIA Blackwell/Ada & AMD RDNA
-                local_wg = min(128, d.get("max_work_group_size", 128))
+                local_wg = max(1, min(128, d.get("max_work_group_size", 128)))
                 init_batch = max(local_wg * 16, 1 << min(20, max(16, intensity)))
+                item["local_wg"] = local_wg
+                item["batch_size"] = (init_batch // local_wg) * local_wg
+                item["buf_header"] = ctx.create_buffer(19 * 4)
+                item["buf_found_nonce"] = ctx.create_buffer(MAX_FOUND * 4)
+                item["buf_found_count"] = ctx.create_buffer(4)
 
-                buf_header = ctx.create_buffer(19 * 4)
-                buf_found_nonce = ctx.create_buffer(4)
-                buf_found_count = ctx.create_buffer(4)
-
-                # Assign separated base nonce partition for each GPU
-                # E.g., GPU 0 starts at 0, GPU 1 at 0x40000000, GPU 2 at 0x80000000...
-                base_nonce = (idx * 0x40000000) & 0xFFFFFFFF
-
-                self.ctx_list.append({
-                    "ctx": ctx,
-                    "kernel": kernel,
-                    "dev": d,
-                    "local_wg": local_wg,
-                    "batch_size": init_batch,
-                    "buf_header": buf_header,
-                    "buf_found_nonce": buf_found_nonce,
-                    "buf_found_count": buf_found_count,
-                    "base_nonce": base_nonce,
-                    "last_job_key": None
-                })
             self.log_message.emit("✓ 全GPU JIT コンパイル＆バッファ初期化完了！", "success")
-
+            return True
         except Exception as e:
             self.log_message.emit(f"OpenCL Multi-GPU 初期化失敗: {e}", "error")
-            return
+            return False
 
-        # 3. Setup Client (Stratum for Pool, RpcSoloClient for Solo)
+    def _connect(self) -> bool:
         if self.target_type == "solo":
             self.solo_client = RpcSoloClient(
                 host=self.solo_host,
@@ -134,211 +174,284 @@ class OpenCLMinerWorker(QThread):
             ok, msg, _ = self.solo_client.test_connection()
             if not ok:
                 self.log_message.emit(f"ノード接続エラー: {msg}", "error")
-                for item in self.ctx_list:
-                    try:
-                        item["ctx"].release()
-                    except Exception:
-                        pass
-                self.ctx_list.clear()
-                return
+                return False
             self.log_message.emit(f"✓ {msg}", "success")
+            return True
+
+        clean_url = (self.pool_url or "").replace("stratum+tcp://", "").replace("tcp://", "").strip()
+        if ":" in clean_url:
+            host, port_str = clean_url.split(":", 1)
+            port = int(port_str) if port_str.isdigit() else POOL_DEFAULT_PORT
         else:
-            clean_url = (self.pool_url or "").replace("stratum+tcp://", "").replace("tcp://", "").strip()
-            if ":" in clean_url:
-                host, port_str = clean_url.split(":", 1)
-                port = int(port_str) if port_str.isdigit() else 8888
-            else:
-                host = clean_url
-                port = 8888
+            host = clean_url
+            port = POOL_DEFAULT_PORT
 
-            if not host.strip():
-                host = "stratum1.vippool.net"
-                self.log_message.emit("⚠ プールホスト名が空のため、デフォルト (stratum1.vippool.net:8888) を使用します。", "warn")
+        if not host.strip():
+            host = POOL_DEFAULT_HOST
+            self.log_message.emit(f"⚠ プールホスト名が空のため、デフォルト ({POOL_DEFAULT_HOST}:{POOL_DEFAULT_PORT}) を使用します。", "warn")
 
-            if "." in self.worker_name:
-                full_user = self.worker_name
-            elif self.wallet:
-                full_user = f"{self.wallet}.{self.worker_name}"
-            else:
-                full_user = self.worker_name
+        if "." in self.worker_name:
+            full_user = self.worker_name
+        elif self.wallet:
+            full_user = f"{self.wallet}.{self.worker_name}"
+        else:
+            full_user = self.worker_name
 
-            self.stratum = StratumClient(
-                host=host,
-                port=port,
-                username=full_user,
-                password=self.pool_password,
-                on_log=lambda msg, lvl: self.log_message.emit(f"[Stratum] {msg}", lvl),
-                on_new_job=self._on_new_stratum_job
-            )
-            connected = self.stratum.connect()
-            if not connected:
-                self.log_message.emit("プールへの接続に失敗しました。", "error")
-                for item in self.ctx_list:
-                    try:
-                        item["ctx"].release()
-                    except Exception:
-                        pass
-                self.ctx_list.clear()
-                return
-
-        # 4. Intensity & Adaptive Workgroup settings
-        recs = self.hardware_mgr.get_mode_recommendation()
-        mode_data = recs["modes"].get(self.mode, recs["modes"]["eco"])
-        intensity = mode_data.get("intensity", 20)
-        first_wg = self.ctx_list[0]["local_wg"] if self.ctx_list else 128
-        first_batch = self.ctx_list[0]["batch_size"] if self.ctx_list else 1048576
-
-        self.log_message.emit(
-            f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {first_batch:,} / WG: {first_wg} / 適応型ディスパッチ有効)",
-            "info"
+        self.stratum = StratumClient(
+            host=host,
+            port=port,
+            username=full_user,
+            password=self.pool_password,
+            on_log=lambda msg, lvl: self.log_message.emit(f"[Stratum] {msg}", lvl),
+            on_new_job=self._on_new_stratum_job
         )
+        if not self.stratum.connect():
+            self.log_message.emit("プールへの接続に失敗しました。", "error")
+            return False
+        return True
 
-        total_hashes_window = 0
-        t_start_window = time.perf_counter()
-        t_last_solo_poll = 0.0
-
-        while self._running:
-            # Check current job / template
-            if self.target_type == "solo":
-                now_mono = time.monotonic()
-                # Poll block template every 1.5 seconds or immediately if none
-                if self.current_template is None or (now_mono - t_last_solo_poll) >= 1.5:
-                    t_last_solo_poll = now_mono
-                    tpl, err = self.solo_client.get_block_template()
-                    if err:
-                        self.log_message.emit(f"[Solo RPC] {err}", "warn")
-                        time.sleep(0.5)
-                        continue
-                    if self.current_template is None or tpl.prev_hash_hex != self.current_template.prev_hash_hex:
-                        self.current_template = tpl
-                        self.log_message.emit(
-                            f"[Solo] 新ブロックテンプレート受信: 高さ #{tpl.height:,} "
-                            f"(Diff Target High: 0x{tpl.target_high:08x}, 報酬: {tpl.coinbase_value / 1e8:.2f} MONA)",
-                            "info"
-                        )
-                current_target_high = self.current_template.target_high if self.current_template else 0x0000FFFF
-                header_76 = self.current_template.header_76 if self.current_template else (b"\x00" * 76)
-                job_key = (self.current_template.height, self.current_template.prev_hash_hex) if self.current_template else "none"
-            else:
-                current_job = self.stratum.current_job if self.stratum else None
-                current_target = self.stratum.target if self.stratum else 0x00000000FFFF0000000000000000000000000000000000000000000000000000
-
-                if not current_job:
-                    time.sleep(0.05)
-                    continue
-
-                # Target upper 32-bit threshold
-                current_target_high = (current_target >> 224) & 0xFFFFFFFF
-                if current_target_high == 0:
-                    current_target_high = 0x0000FFFF
-
-                en2_hex = f"{self.stratum.extranonce2_counter:0{self.stratum.extranonce2_size * 2}x}"
-                header_76 = current_job.build_header_prefix(self.stratum.extranonce1, en2_hex)
-                job_key = (current_job.job_id, en2_hex, current_job.ntime)
-
-            for item in self.ctx_list:
-                ctx = item["ctx"]
-                kernel = item["kernel"]
-                local_wg = item["local_wg"]
-                batch_size = item["batch_size"]
-                buf_header = item["buf_header"]
-                buf_found_nonce = item["buf_found_nonce"]
-                buf_found_count = item["buf_found_count"]
-
-                # Build 76-byte header only when job or template changes
-                if job_key != item["last_job_key"]:
-                    c_header = (c_uint * 19).from_buffer_copy(header_76)
-                    ctx.write_buffer(buf_header, c_header, 19 * 4)
-                    item["last_job_key"] = job_key
-                    # Reset base_nonce
-                    item["base_nonce"] = (item["dev"]["global_index"] * 0x40000000) & 0xFFFFFFFF
-
-                # Clear found count (4 bytes)
-                c_zero = (c_uint * 1)(0)
-                ctx.write_buffer(buf_found_count, c_zero, 4)
-
-                # Set kernel arguments
-                ctx.set_arg_mem(kernel, 0, buf_header)
-                ctx.set_arg_uint(kernel, 1, item["base_nonce"])
-                ctx.set_arg_uint(kernel, 2, current_target_high)
-                ctx.set_arg_mem(kernel, 3, buf_found_nonce)
-                ctx.set_arg_mem(kernel, 4, buf_found_count)
-
-                # Measure dispatch duration to dynamically adapt batch size towards ~100ms
-                t_disp_start = time.perf_counter()
-                ctx.run_kernel_1d(kernel, batch_size, local_wg)
-                ctx.finish()
-                disp_elapsed = time.perf_counter() - t_disp_start
-
-                # Check if any nonce met target
-                c_count = (c_uint * 1)(0)
-                ctx.read_buffer(buf_found_count, c_count, 4)
-                if c_count[0] > 0:
-                    c_res_nonce = (c_uint * 1)(0)
-                    ctx.read_buffer(buf_found_nonce, c_res_nonce, 4)
-                    found_nonce = c_res_nonce[0]
-                    self.log_message.emit(
-                        f"★ GPU #{item['dev']['global_index']} 有効な Nonce 発見！: 0x{found_nonce:08x}",
-                        "success"
-                    )
-
-                    if self.target_type == "solo":
-                        if self.current_template:
-                            ok, submit_msg = self.solo_client.submit_block(self.current_template, found_nonce)
-                            if ok:
-                                self.accepted_shares += 1
-                                self.shares_update.emit(self.accepted_shares, self.rejected_shares)
-                                self.log_message.emit(submit_msg, "success")
-                                # Clear template so next iteration fetches new block template immediately
-                                self.current_template = None
-                            else:
-                                self.rejected_shares += 1
-                                self.shares_update.emit(self.accepted_shares, self.rejected_shares)
-                                self.log_message.emit(submit_msg, "error")
-                    else:
-                        if self.stratum and current_job:
-                            self.stratum.submit_share(
-                                job_id=current_job.job_id,
-                                extranonce2=en2_hex,
-                                ntime=current_job.ntime,
-                                nonce_uint=found_nonce,
-                                callback=self._on_share_response
-                            )
-
-                item["base_nonce"] = (item["base_nonce"] + batch_size) & 0xFFFFFFFF
-                total_hashes_window += batch_size
-
-                # Adaptive batch tuning (Target ~80-120ms to eliminate stale shares)
-                if disp_elapsed > 0.001:
-                    ideal_batch = int(batch_size * (0.10 / disp_elapsed))
-                    batch_size = max(local_wg * 16, min(4194304, int(batch_size * 0.7 + ideal_batch * 0.3)))
-                    item["batch_size"] = (batch_size // local_wg) * local_wg
-
-            # Periodic telemetry update (every ~1 sec)
-            now = time.perf_counter()
-            dt = now - t_start_window
-            if dt >= 1.0:
-                mhs = (total_hashes_window / dt) / 1_000_000.0
-                metrics = self.hardware_mgr.get_live_metrics()
-                pwr = metrics.get("power_w", 0.0)
-                if pwr <= 0:
-                    pwr = mode_data.get("target_pwr_w", 200.0) * max(1, len(self.ctx_list))
-                eff = mhs / pwr if pwr > 0 else 0.0
-                self.hashrate_update.emit(mhs, pwr, eff)
-
-                total_hashes_window = 0
-                t_start_window = now
-
-        # Cleanup
+    def _cleanup(self):
         if self.stratum:
             self.stratum.close()
             self.stratum = None
+        if self._cpu_pool:
+            self._cpu_pool.shutdown(wait=True)
+            self._cpu_pool = None
         for item in self.ctx_list:
             try:
                 item["ctx"].release()
             except Exception:
                 pass
         self.ctx_list.clear()
+
+    # ------------------------------------------------------------------ mining
+    @staticmethod
+    def _extranonce2_hex(counter: int, size: int) -> str:
+        if size <= 0:
+            return ""
+        return f"{counter % (1 << (8 * size)):0{size * 2}x}"
+
+    def _mine_loop(self):
+        mode_data = self._mode_data()
+        solo = self.target_type == "solo"
+
+        if self.ctx_list:
+            first = self.ctx_list[0]
+            self.log_message.emit(
+                f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {first['batch_size']:,} / WG: {first['local_wg']} / 適応型ディスパッチ有効)",
+                "info"
+            )
+
+        work_key = None        # identifies the header currently loaded on the GPUs
+        cached_key = None      # identifies the header last built on the CPU
+        header_76 = b""
+        cursor = 0             # next unsearched nonce of the current header (shared by all GPUs)
+        en2_counter = 0        # pool: extranonce2 of the current header
+        last_job_key = None
+        tpl_serial = 0
+        t_last_poll = 0.0
+        t_hi, t_lo = 0, 0
+
+        total_hashes_window = 0
+        t_start_window = time.perf_counter()
+
+        while self._running:
+            # ---- 1. current work -------------------------------------------------
+            work = {}
+            if solo:
+                now_mono = time.monotonic()
+                # Poll the template every 1.5 s; the current one is dropped after a found block
+                # or when its nonce space is exhausted.
+                if self.current_template is None or (now_mono - t_last_poll) >= 1.5:
+                    t_last_poll = now_mono
+                    tpl, err = self.solo_client.get_block_template()
+                    if err:
+                        if self.solo_client.address_invalid:
+                            self.log_message.emit(f"[Solo RPC] {err}", "error")
+                            return
+                        self.log_message.emit(f"[Solo RPC] {err}", "warn")
+                        self._sleep(0.5)
+                        continue
+                    new_tip = self.current_template is None or tpl.prev_hash_hex != self.current_template.prev_hash_hex
+                    if new_tip:
+                        self.log_message.emit(
+                            f"[Solo] 新ブロックテンプレート受信: 高さ #{tpl.height:,} "
+                            f"(Target: 0x{tpl.target_high:08x}{tpl.target_low:08x}..., 報酬: {tpl.coinbase_value / 1e8:.2f} MONA)",
+                            "info"
+                        )
+                        self.current_template = tpl
+                        tpl_serial += 1
+                        cursor = 0
+                tpl = self.current_template
+                work_key = ("solo", tpl_serial)
+                header_76 = tpl.header_76
+                t_hi, t_lo = tpl.target_high, tpl.target_low
+                work["tpl"] = tpl
+            else:
+                if not self.stratum.is_alive:
+                    if self._running:  # not caused by stop()
+                        self.log_message.emit("プールとの接続が切断されました。採掘を停止します。", "error")
+                    return
+                if self.stratum.authorized is False:
+                    self.log_message.emit("プール認証に失敗したため採掘を停止します。ワーカー名・パスワードを確認してください。", "error")
+                    return
+                job = self.stratum.current_job
+                if job is None:
+                    self._sleep(0.05)
+                    continue
+                t_hi, t_lo = target_words(self.stratum.target)
+
+                job_key = (job.job_id, job.ntime)
+                if job_key != last_job_key:
+                    last_job_key = job_key
+                    cursor = 0
+                en2_hex = self._extranonce2_hex(en2_counter, self.stratum.extranonce2_size)
+                work_key = (job.job_id, job.ntime, en2_counter)
+                if work_key != cached_key:
+                    header_76 = job.build_header_prefix(self.stratum.extranonce1, en2_hex)
+                    cached_key = work_key
+                work["job"] = job
+                work["en2_hex"] = en2_hex
+
+            # ---- 2. nonce space exhausted: change the header ---------------------
+            if cursor >= NONCE_SPACE:
+                if solo:
+                    self.current_template = None   # fetch a fresh template (new curtime)
+                else:
+                    en2_counter += 1
+                cursor = 0
+                continue
+
+            # ---- 3. launch one kernel per GPU (they run concurrently) ------------
+            pending = []
+            for item in self.ctx_list:
+                ctx = item["ctx"]
+                kernel = item["kernel"]
+                wg = item["local_wg"]
+
+                batch = min(item["batch_size"], NONCE_SPACE - cursor)
+                batch -= batch % wg
+                if batch <= 0:
+                    cursor = NONCE_SPACE
+                    break
+
+                if item["last_key"] != work_key:
+                    ctx.write_buffer(item["buf_header"], (c_uint * 19).from_buffer_copy(header_76), 19 * 4)
+                    item["last_key"] = work_key
+
+                ctx.write_buffer(item["buf_found_count"], (c_uint * 1)(0), 4)
+                ctx.set_arg_mem(kernel, 0, item["buf_header"])
+                ctx.set_arg_uint(kernel, 1, cursor)
+                ctx.set_arg_uint(kernel, 2, t_hi)
+                ctx.set_arg_uint(kernel, 3, t_lo)
+                ctx.set_arg_mem(kernel, 4, item["buf_found_nonce"])
+                ctx.set_arg_mem(kernel, 5, item["buf_found_count"])
+
+                t_launch = time.perf_counter()
+                ctx.run_kernel_1d(kernel, batch, wg)
+                pending.append((item, batch, t_launch))
+                cursor += batch
+
+            # CPU threads scan their own slices while the GPUs run
+            cpu_jobs = []
+            if self._cpu_pool:
+                for _ in range(self.cpu_threads):
+                    chunk = min(self._cpu_chunk, NONCE_SPACE - cursor)
+                    if chunk <= 0:
+                        cursor = NONCE_SPACE
+                        break
+                    cpu_jobs.append((chunk, self._cpu_pool.submit(
+                        self._cpu_scan, header_76, cursor, chunk, t_hi, t_lo)))
+                    cursor += chunk
+
+            # ---- 4. collect results ---------------------------------------------
+            for item, batch, t_launch in pending:
+                ctx = item["ctx"]
+                ctx.finish()
+                elapsed = time.perf_counter() - t_launch
+
+                c_count = (c_uint * 1)(0)
+                ctx.read_buffer(item["buf_found_count"], c_count, 4)
+                if c_count[0] > 0:
+                    c_nonces = (c_uint * MAX_FOUND)()
+                    ctx.read_buffer(item["buf_found_nonce"], c_nonces, MAX_FOUND * 4)
+                    nonces = [int(c_nonces[i]) for i in range(min(c_count[0], MAX_FOUND))]
+                    self._handle_found(f"GPU #{item['dev']['global_index']}", nonces, work)
+
+                total_hashes_window += batch
+
+                # Adaptive batch tuning: ~100 ms per launch keeps stale shares low
+                if elapsed > 0.001:
+                    wg = item["local_wg"]
+                    ideal_batch = int(item["batch_size"] * (TARGET_DISPATCH_S / elapsed))
+                    new_batch = int(item["batch_size"] * 0.7 + ideal_batch * 0.3)
+                    new_batch = max(wg * 16, min(MAX_BATCH, new_batch))
+                    item["batch_size"] = (new_batch // wg) * wg
+
+                if solo and self.current_template is None:
+                    break  # a block was found: drop the remaining results, fetch a new template
+
+            if cpu_jobs:
+                slowest = 0.0
+                for chunk, future in cpu_jobs:
+                    count, nonces, elapsed = future.result()
+                    slowest = max(slowest, elapsed)
+                    total_hashes_window += chunk
+                    if nonces and not (solo and self.current_template is None):
+                        self._handle_found("CPU", nonces, work)
+                if slowest > 0.001:
+                    ideal = int(self._cpu_chunk * (TARGET_DISPATCH_S / slowest))
+                    self._cpu_chunk = max(CPU_MIN_CHUNK, min(CPU_MAX_CHUNK, int(self._cpu_chunk * 0.7 + ideal * 0.3)))
+
+            # ---- 5. telemetry (about once per second) ----------------------------
+            now = time.perf_counter()
+            dt = now - t_start_window
+            if dt >= 1.0:
+                mhs = (total_hashes_window / dt) / 1_000_000.0
+                metrics = self.hardware_mgr.get_live_metrics()
+                pwr = metrics.get("power_w", 0.0) if self.ctx_list else 0.0
+                if pwr <= 0 and self.ctx_list:
+                    pwr = mode_data.get("target_pwr_w", 200.0) * len(self.ctx_list)
+                if self._cpu_pool:
+                    pwr += 30.0 + CPU_WATT_PER_THREAD * self.cpu_threads
+                eff = mhs / pwr if pwr > 0 else 0.0
+                self.hashrate_update.emit(mhs, pwr, eff)
+
+                total_hashes_window = 0
+                t_start_window = now
+
+    @staticmethod
+    def _cpu_scan(header_76: bytes, start: int, count: int, t_hi: int, t_lo: int):
+        t0 = time.perf_counter()
+        n, nonces = CpuBackend.scan(header_76, start, count, t_hi, t_lo)
+        return n, nonces, time.perf_counter() - t0
+
+    def _handle_found(self, source: str, nonces: list, work: dict):
+        for nonce in nonces:
+            self.log_message.emit(f"★ {source} 有効な Nonce 発見！: 0x{nonce:08x}", "success")
+
+            if self.target_type == "solo":
+                tpl = work["tpl"]
+                ok, submit_msg = self.solo_client.submit_block(tpl, nonce)
+                if ok:
+                    self.accepted_shares += 1
+                else:
+                    self.rejected_shares += 1
+                self.shares_update.emit(self.accepted_shares, self.rejected_shares)
+                self.log_message.emit(submit_msg, "success" if ok else "error")
+                # Either way the template is finished (new tip, or rejected): fetch a new one.
+                self.current_template = None
+                return
+            else:
+                if self.stratum:
+                    job = work["job"]
+                    self.stratum.submit_share(
+                        job_id=job.job_id,
+                        extranonce2=work["en2_hex"],
+                        ntime=job.ntime,
+                        nonce_uint=nonce,
+                        callback=self._on_share_response
+                    )
 
     def _on_new_stratum_job(self, job: StratumJob, target: int):
         self.log_message.emit(f"新ジョブ受信: Job ID #{job.job_id} (Clean: {job.clean_jobs})", "info")

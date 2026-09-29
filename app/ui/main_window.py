@@ -1,14 +1,14 @@
 import os
-import sys
+import time
 import webbrowser
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QFrame,
     QFileDialog, QMessageBox, QTabWidget, QRadioButton, QButtonGroup,
-    QSpinBox, QDoubleSpinBox, QSlider, QStackedWidget, QScrollArea, QSizePolicy,
+    QSpinBox, QDoubleSpinBox, QScrollArea, QProgressBar,
     QListWidget, QListWidgetItem
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal, QThread
 
 from app.hardware import HardwareManager
 from app.miner_controller import MinerController
@@ -20,17 +20,44 @@ from app.services import (
     GpuHardwareController, WebMonitoringServer
 )
 from app.miner.opencl_backend import OpenCLBackend
+from app.miner.benchmark import BenchmarkWorker
+
+
+class NodeSyncWorker(QThread):
+    """バックグラウンドでローカルノードのブロック同期状態を取得するスレッド"""
+    sync_result = Signal(dict)
+
+    def __init__(self, host="127.0.0.1", port=9402, user="monacoinrpc", password="rpcpassword"):
+        super().__init__()
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+
+    def run(self):
+        from app.services.node_service import fetch_node_sync_info
+        info = fetch_node_sync_info(self.host, self.port, self.user, self.password, timeout=1.5)
+        self.sync_result.emit(info)
+
 
 class MainWindow(QMainWindow):
+    # Emitted by the web-server thread; delivered to the GUI thread (QTimer.singleShot never fires
+    # when called from a thread that has no Qt event loop).
+    remote_toggle = Signal(bool)
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MonaMiner RTX / RX v2.1.0 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self._web_snapshot = {}
+        self.setWindowTitle("MonaMiner RTX / RX v2.1.1 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(920, 640)
         self.resize(1120, 880)
         self.setStyleSheet(MAIN_STYLE)
 
         self.config_mgr = ConfigManager()
         self.hw_mgr = HardwareManager()
+        bench = self.config_mgr.get("benchmark", {}) or {}
+        self.hw_mgr.set_measured(bench.get("gpu_mhs"), bench.get("cpu_mhs_per_thread"))
+        self._benchmark_worker = None
         self.miner_ctrl = MinerController(self.hw_mgr)
 
         # v2.0.0 Services
@@ -59,14 +86,21 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._connect_signals()
         self._setup_services()
+        self.remote_toggle.connect(self._on_remote_toggle)
 
         # Telemetry refresh timer (every 1 second)
         self.telemetry_timer = QTimer(self)
         self.telemetry_timer.timeout.connect(self._update_hardware_telemetry)
         self.telemetry_timer.start(1000)
 
-        # Initial telemetry update
+        # Node sync status timer (every 3 seconds)
+        self.node_sync_timer = QTimer(self)
+        self.node_sync_timer.timeout.connect(self._check_node_sync_async)
+        self.node_sync_timer.start(3000)
+
+        # Initial updates
         self._update_hardware_telemetry()
+        self._check_node_sync_async()
 
     def _setup_ui(self):
         # 0. Main Scroll Area for small resolutions & high DPI
@@ -105,7 +139,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX / RX v2.1.0 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v2.1.1 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -205,13 +239,93 @@ class MainWindow(QMainWindow):
         self.lbl_addr_status = QLabel("")
         self.lbl_addr_status.setStyleSheet("font-size: 11px;")
         addr_row.addWidget(self.lbl_addr_status, stretch=1)
+
+        self.btn_wallet_history = QPushButton("📜 入出金履歴 (残高確認)")
+        self.btn_wallet_history.setCursor(Qt.PointingHandCursor)
+        self.btn_wallet_history.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 8px 14px; border-radius: 6px; font-size: 12px;")
+        self.btn_wallet_history.clicked.connect(self._open_wallet_history_dialog)
+        addr_row.addWidget(self.btn_wallet_history)
+
         addr_layout.addLayout(addr_row)
 
-        lbl_addr_hint = QLabel("💡 初めての方: ご自身のモナコイン受取アドレスを入力するだけで、すぐにマイニングを開始できます。")
+        lbl_addr_hint = QLabel("💡 初めての方: ご自身のモナコイン受取アドレスを入力するだけで、すぐにマイニングを開始できます。「📜 入出金履歴」でリアルタイム残高や送受金履歴を確認できます。")
         lbl_addr_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         addr_layout.addWidget(lbl_addr_hint)
 
         dash_layout.addWidget(addr_card)
+
+        # 1-A2. Blockchain Node Sync Status Card (ブロックチェーン同期状況)
+        sync_card = QFrame()
+        sync_card.setObjectName("card")
+        sync_layout = QVBoxLayout(sync_card)
+        sync_layout.setContentsMargins(12, 10, 12, 10)
+        sync_layout.setSpacing(6)
+
+        sync_header = QHBoxLayout()
+        lbl_sync_title = QLabel("⛓️ ブロックチェーン同期状況 (Blockchain Sync)")
+        lbl_sync_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #38bdf8;")
+        sync_header.addWidget(lbl_sync_title)
+        sync_header.addStretch()
+
+        self.lbl_sync_badge = QLabel("⏹ ノード停止中")
+        self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #334155; color: #94a3b8;")
+        sync_header.addWidget(self.lbl_sync_badge)
+
+        self.btn_sync_refresh = QPushButton("🔄 更新")
+        self.btn_sync_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_sync_refresh.setStyleSheet("background-color: #1e293b; color: #cbd5e1; border: 1px solid #475569; padding: 3px 10px; font-size: 11px; font-weight: bold; border-radius: 4px;")
+        self.btn_sync_refresh.clicked.connect(self._manual_refresh_node_sync)
+        sync_header.addWidget(self.btn_sync_refresh)
+
+        self.btn_start_mainnet_node = QPushButton("⚡ 本番ノード起動")
+        self.btn_start_mainnet_node.setCursor(Qt.PointingHandCursor)
+        self.btn_start_mainnet_node.setStyleSheet("background-color: #10b981; color: white; padding: 3px 10px; font-size: 11px; font-weight: bold; border-radius: 4px;")
+        self.btn_start_mainnet_node.clicked.connect(self._launch_mainnet_environment)
+        sync_header.addWidget(self.btn_start_mainnet_node)
+
+        sync_layout.addLayout(sync_header)
+
+        # Progress bar
+        self.progress_sync = QProgressBar()
+        self.progress_sync.setRange(0, 1000)
+        self.progress_sync.setValue(0)
+        self.progress_sync.setTextVisible(True)
+        self.progress_sync.setFormat("ノード未起動")
+        self.progress_sync.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #334155;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #0f172a;
+                color: #f8fafc;
+                font-weight: bold;
+                height: 20px;
+                font-size: 11px;
+            }
+            QProgressBar::chunk {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:1 #10b981);
+                border-radius: 3px;
+            }
+        """)
+        sync_layout.addWidget(self.progress_sync)
+
+        # Block Numbers Details Row
+        sync_num_row = QHBoxLayout()
+        self.lbl_net_best_block = QLabel("🌐 ネットワーク最新: --")
+        self.lbl_net_best_block.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        sync_num_row.addWidget(self.lbl_net_best_block)
+
+        self.lbl_local_held_block = QLabel("💻 このPCの所持ブロック: 未接続")
+        self.lbl_local_held_block.setStyleSheet("font-size: 12px; font-weight: bold; color: #e2e8f0;")
+        sync_num_row.addWidget(self.lbl_local_held_block)
+
+        self.lbl_sync_detail = QLabel("ノード未起動 (クリックで起動)")
+        self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        sync_num_row.addWidget(self.lbl_sync_detail)
+        sync_num_row.addStretch()
+
+        sync_layout.addLayout(sync_num_row)
+        dash_layout.addWidget(sync_card)
 
         # 1-B. Device & Optimization Profile (左右並列カード)
         mid_row = QHBoxLayout()
@@ -489,6 +603,12 @@ class MainWindow(QMainWindow):
         btn_launch_regtest.clicked.connect(self._launch_regtest_environment)
         solo_btn_row.addWidget(btn_launch_regtest)
 
+        btn_solo_wallet = QPushButton("📜 ウォレット履歴 (残高確認)")
+        btn_solo_wallet.setStyleSheet("background-color: #6366f1; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        btn_solo_wallet.setCursor(Qt.PointingHandCursor)
+        btn_solo_wallet.clicked.connect(self._open_wallet_history_dialog)
+        solo_btn_row.addWidget(btn_solo_wallet)
+
         tab_solo_layout.addLayout(solo_btn_row, 3, 0, 1, 4)
 
         self.tabs_target.addTab(tab_solo, "🏠 ソロマイニング (Monacoin Core RPC)")
@@ -674,7 +794,18 @@ class MainWindow(QMainWindow):
         lbl_hw_desc = QLabel("💡 複数GPUを搭載しているPCでは、チェックを入れたすべてのGPUで並列採掘が行われます。\n※ NVML電力リミット設定には管理者権限が必要です。")
         lbl_hw_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
         tab_hw_layout.addWidget(lbl_hw_desc, 4, 0, 1, 4)
-        tab_hw_layout.setRowStretch(5, 1)
+
+        btn_bench = QPushButton("📊 ベンチマーク実行 (GPU・CPUの実測ハッシュレートを計測 / 約10秒)")
+        btn_bench.setStyleSheet("background-color: #2563eb; color: white; border-radius: 4px; padding: 7px; font-weight: bold;")
+        btn_bench.setCursor(Qt.PointingHandCursor)
+        btn_bench.clicked.connect(self._run_benchmark)
+        self.btn_bench = btn_bench
+        tab_hw_layout.addWidget(btn_bench, 5, 0, 1, 4)
+        self.lbl_bench = QLabel(self._benchmark_text())
+        self.lbl_bench.setWordWrap(True)
+        self.lbl_bench.setStyleSheet("color: #a7f3d0; font-size: 12px;")
+        tab_hw_layout.addWidget(self.lbl_bench, 6, 0, 1, 4)
+        tab_hw_layout.setRowStretch(7, 1)
 
         self.tabs_settings.addTab(tab_hw, "🔧 ハードウェア制御 (Multi-GPU)")
 
@@ -883,7 +1014,7 @@ class MainWindow(QMainWindow):
             description="Discord Webhook への接続に成功しました！採掘通知を受信できます。",
             color=0x38BDF8,
             fields=[
-                {"name": "バージョン", "value": "v2.1.0", "inline": True},
+                {"name": "バージョン", "value": "v2.1.1", "inline": True},
                 {"name": "ステータス", "value": "Ready", "inline": True}
             ]
         )
@@ -948,7 +1079,49 @@ class MainWindow(QMainWindow):
         self.console.append_log(f"[HW制御] {result_txt}", "info")
         QMessageBox.information(self, "設定結果", result_txt)
 
+    def _benchmark_text(self) -> str:
+        m = self.hw_mgr.measured
+        if not m.get("gpu_mhs") and not m.get("cpu_mhs_per_thread"):
+            return "未測定です。ボタンを押すと、この PC の実際のハッシュレートを計測して「予想」表示に反映します。"
+        parts = []
+        if m.get("gpu_mhs"):
+            parts.append(f"GPU: {m['gpu_mhs']:.1f} MH/s")
+        if m.get("cpu_mhs_per_thread"):
+            parts.append(f"CPU: {m['cpu_mhs_per_thread']:.2f} MH/s / スレッド")
+        return "実測値 → " + " ｜ ".join(parts)
+
+    def _run_benchmark(self):
+        if self.miner_ctrl.is_mining:
+            QMessageBox.information(self, "ベンチマーク", "採掘中は実行できません。採掘を停止してから実行してください。")
+            return
+        if self._benchmark_worker and self._benchmark_worker.isRunning():
+            return
+        self.btn_bench.setEnabled(False)
+        self.lbl_bench.setText("計測中... (GPU 約3秒 + CPU 約2秒)")
+        self._benchmark_worker = BenchmarkWorker(self.spin_threads.value())
+        self._benchmark_worker.progress.connect(self.lbl_bench.setText)
+        self._benchmark_worker.result.connect(self._on_benchmark_result)
+        self._benchmark_worker.start()
+
+    def _on_benchmark_result(self, res: dict):
+        self.btn_bench.setEnabled(True)
+        self.hw_mgr.set_measured(res.get("gpu_mhs"), res.get("cpu_mhs_per_thread"))
+        self.config_mgr.set("benchmark", {k: v for k, v in res.items() if not k.endswith("_error")})
+        modes = self.hw_mgr.get_mode_recommendation()["modes"]
+        for key, card in self.mode_cards.items():
+            card.set_est_hashrate(modes[key]["est_hashrate"])
+        text = self._benchmark_text()
+        errors = [res[k] for k in ("gpu_error", "cpu_error") if k in res]
+        if errors:
+            text += "  ⚠ " + " / ".join(errors)
+        self.lbl_bench.setText(text)
+        self.console.append_log(f"ベンチマーク完了: {self._benchmark_text()}", "info")
+
     def _get_web_status(self) -> dict:
+        """Called from the HTTP server thread: only returns the snapshot built on the GUI thread."""
+        return self._web_snapshot
+
+    def _build_web_status(self) -> dict:
         m = self.hw_mgr.get_live_metrics()
         hr_val = float(self.card_hashrate.lbl_val.text().replace(" MH/s", "") or "0.0")
         pwr_val = float(self.card_power.lbl_val.text().replace(" W", "") or "0.0")
@@ -961,7 +1134,6 @@ class MainWindow(QMainWindow):
         # Uptime string
         uptime_str = "00:00:00"
         if self.mining_start_time and self.miner_ctrl.is_mining:
-            import time
             sec = int(time.time() - self.mining_start_time)
             hrs = sec // 3600
             mins = (sec % 3600) // 60
@@ -971,14 +1143,15 @@ class MainWindow(QMainWindow):
         shares_txt = self.card_shares.lbl_val.text()
         accepted = 0
         rejected = 0
-        if "/" in shares_txt:
-            parts = shares_txt.split("/")
-            try:
+        try:
+            if "/" in shares_txt:  # pool: "accepted / total"
+                parts = shares_txt.split("/")
                 accepted = int(parts[0].strip())
-                tot = int(parts[1].strip())
-                rejected = max(0, tot - accepted)
-            except Exception:
-                pass
+                rejected = max(0, int(parts[1].strip()) - accepted)
+            else:  # solo: "N blocks"
+                accepted = int(shares_txt.split()[0])
+        except (ValueError, IndexError):
+            pass
 
         # Logs
         logs = []
@@ -1003,11 +1176,14 @@ class MainWindow(QMainWindow):
         }
 
     def _remote_start_mining(self):
-        # Trigger GUI toggle mining via QTimer
-        QTimer.singleShot(0, lambda: self._toggle_mining() if not self.miner_ctrl.is_mining else None)
+        self.remote_toggle.emit(True)
 
     def _remote_stop_mining(self):
-        QTimer.singleShot(0, lambda: self._toggle_mining() if self.miner_ctrl.is_mining else None)
+        self.remote_toggle.emit(False)
+
+    def _on_remote_toggle(self, start: bool):
+        if start != self.miner_ctrl.is_mining:
+            self._toggle_mining()
 
     def _toggle_mining(self):
         if self.miner_ctrl.is_mining:
@@ -1078,7 +1254,6 @@ class MainWindow(QMainWindow):
 
             selected_gpus = self._get_selected_gpu_indices()
 
-            import time
             self.mining_start_time = time.time()
 
             self.miner_ctrl.start_mining(
@@ -1135,6 +1310,8 @@ class MainWindow(QMainWindow):
         else:
             self.card_eff.set_value("--")
 
+        self._web_snapshot = self._build_web_status()
+
         # Update profit tab summary
         if self.miner_ctrl.is_mining and hr > 0:
             self.lbl_profit_summary.setText(
@@ -1144,7 +1321,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX / RX v2.0.0 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v2.1.1 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")
@@ -1215,7 +1392,113 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "起動エラー", f"Regtest 環境の起動に失敗しました: {e}")
 
+    def _open_wallet_history_dialog(self):
+        from app.ui.wallet_dialog import WalletHistoryDialog
+        addr = self.edit_address.text().strip()
+        if not addr:
+            addr = self.config_mgr.get("wallet_address", "").strip()
+
+        if not addr:
+            QMessageBox.warning(
+                self, "アドレス未入力",
+                "モナコイン受取アドレスが入力されていません。\n"
+                "入力欄にご自身のモナコインアドレスを入力してからボタンを押してください。"
+            )
+            return
+
+        dlg = WalletHistoryDialog(addr, self)
+        dlg.exec()
+
+    def _manual_refresh_node_sync(self):
+        self.btn_sync_refresh.setEnabled(False)
+        self.lbl_sync_badge.setText("⏳ 問い合わせ中...")
+        self._check_node_sync_async()
+        QTimer.singleShot(1500, lambda: self.btn_sync_refresh.setEnabled(True))
+
+    def _check_node_sync_async(self):
+        if getattr(self, "_node_worker", None) is not None and self._node_worker.isRunning():
+            return
+
+        host = self.config_mgr.get("solo_host", "127.0.0.1")
+        port = self.config_mgr.get("solo_port", 9402)
+        user = self.config_mgr.get("solo_user", "monacoinrpc")
+        passwd = self.config_mgr.get("solo_pass", "rpcpassword")
+
+        self._node_worker = NodeSyncWorker(host, port, user, passwd)
+        self._node_worker.sync_result.connect(self._on_node_sync_updated)
+        self._node_worker.start()
+
+    def _on_node_sync_updated(self, info: dict):
+        is_running = info.get("is_running", False)
+        is_loading = info.get("is_loading", False)
+        blocks = info.get("blocks", 0)
+        headers = info.get("headers", 0)
+        prog = info.get("progress", 0.0)
+        ibd = info.get("ibd", False)
+        chain = info.get("chain", "")
+
+        if not is_running:
+            self.lbl_sync_badge.setText("⏹ ノード停止中")
+            self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #334155; color: #94a3b8;")
+            self.lbl_net_best_block.setText("🌐 ネットワーク最新: --")
+            self.lbl_local_held_block.setText("💻 このPCの所持ブロック: 未接続")
+            self.lbl_sync_detail.setText("ノード未起動 (クリックで起動)")
+            self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #94a3b8;")
+            self.progress_sync.setValue(0)
+            self.progress_sync.setFormat("ノード未起動")
+        elif is_loading:
+            self.lbl_sync_badge.setText("⏳ 初期化中...")
+            self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #d97706; color: white;")
+            self.lbl_net_best_block.setText("🌐 ネットワーク最新: 読込中")
+            self.lbl_local_held_block.setText("💻 このPCの所持ブロック: インデックス読込中")
+            self.lbl_sync_detail.setText("LevelDBインデックス読込中...")
+            self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #fbbf24;")
+            self.progress_sync.setValue(0)
+            self.progress_sync.setFormat("インデックス読込中")
+        elif ibd:
+            self.lbl_sync_badge.setText(f"⏳ 同期検証中 ({chain.upper()})")
+            self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #d97706; color: white;")
+            self.lbl_net_best_block.setText(f"🌐 ネットワーク最新: {headers:,}")
+            self.lbl_local_held_block.setText(f"💻 このPCの所持ブロック: {blocks:,}")
+            remaining = max(0, headers - blocks)
+            self.lbl_sync_detail.setText(f"残り: {remaining:,} ブロック")
+            self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #fbbf24; font-weight: bold;")
+            self.progress_sync.setValue(int(prog * 10))
+            self.progress_sync.setFormat(f"検証進捗: {prog:.1f}% ({blocks:,} / {headers:,})")
+        else:
+            self.lbl_sync_badge.setText(f"✅ 同期完了 ({chain.upper()})")
+            self.lbl_sync_badge.setStyleSheet("font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: #059669; color: white;")
+            self.lbl_net_best_block.setText(f"🌐 ネットワーク最新: {headers:,}")
+            self.lbl_local_held_block.setText(f"💻 このPCの所持ブロック: {blocks:,}")
+            self.lbl_sync_detail.setText("✓ ソロ採掘可能 (最新ブロック到達)")
+            self.lbl_sync_detail.setStyleSheet("font-size: 12px; color: #34d399; font-weight: bold;")
+            self.progress_sync.setValue(1000)
+            self.progress_sync.setFormat(f"同期 100% (最新 #{blocks:,})")
+
+    def _launch_mainnet_environment(self):
+        import subprocess
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        bat_path = os.path.join(base_dir, "node", "start_mainnet_solo.bat")
+        if not os.path.exists(bat_path):
+            QMessageBox.warning(self, "エラー", f"起動スクリプトが見つかりません:\n{bat_path}")
+            return
+
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", bat_path], shell=True)
+            self.console.append_log("🌐 本番メインネット Monacoin Core ノードの別ウィンドウ起動を要求しました。", "info")
+            QMessageBox.information(
+                self, "メインネット ノード起動",
+                "本番メインネットの Monacoin Core ノードを別ウィンドウで起動しました。\n\n"
+                "ブロック検証がバックグラウンドで進行します。\n"
+                "上の『🔄 更新』ボタンで現在のブロック高と進捗状況をリアルタイムに確認できます。"
+            )
+            QTimer.singleShot(3000, self._manual_refresh_node_sync)
+        except Exception as e:
+            QMessageBox.warning(self, "起動エラー", f"メインネット ノードの起動に失敗しました: {e}")
+
     def closeEvent(self, event):
+        if hasattr(self, "node_sync_timer"):
+            self.node_sync_timer.stop()
         if self.miner_ctrl.is_mining:
             self.miner_ctrl.stop_mining()
         self.web_server.stop()

@@ -28,6 +28,25 @@ def encode_varint(n: int) -> bytes:
     else:
         return b'\xff' + struct.pack('<Q', n)
 
+def encode_script_num_push(n: int) -> bytes:
+    """
+    Serialization of `CScript() << n` (Bitcoin/Monacoin Core), as required for the
+    BIP34 block height at the start of the coinbase scriptSig.
+    """
+    if n == 0:
+        return b'\x00'
+    if 1 <= n <= 16:
+        return bytes([0x50 + n])  # OP_1 .. OP_16
+    data = bytearray()
+    v = n
+    while v:
+        data.append(v & 0xff)
+        v >>= 8
+    if data[-1] & 0x80:
+        data.append(0x00)  # keep the number positive
+    return bytes([len(data)]) + bytes(data)
+
+
 class SoloBlockTemplate:
     """
     Holds a retrieved block template and constructs block headers / full blocks.
@@ -47,11 +66,10 @@ class SoloBlockTemplate:
         self.script_pubkey = script_pubkey
         self.wallet_address = wallet_address
         
-        # Upper 32 bits of target
+        # Two most significant 32-bit words of the 256-bit target (compared by the GPU kernel)
         self.target_int = int(self.target_hex, 16)
         self.target_high = (self.target_int >> 224) & 0xffffffff
-        if self.target_high == 0:
-            self.target_high = 0x0000ffff
+        self.target_low = (self.target_int >> 192) & 0xffffffff
 
         # Build Coinbase TX and Merkle root
         self.cb_tx_bytes, self.cb_hash = self._build_coinbase_tx()
@@ -59,18 +77,9 @@ class SoloBlockTemplate:
         self.header_76 = self._build_header_prefix()
 
     def _build_coinbase_tx(self) -> Tuple[bytes, bytes]:
-        # BIP34: height in scriptSig
-        if self.height <= 16:
-            height_script = bytes([1, self.height])
-        elif self.height <= 127:
-            height_script = bytes([1, self.height])
-        elif self.height <= 255:
-            height_script = bytes([2, self.height, 0])
-        else:
-            height_script = bytes([2, self.height & 0xff, (self.height >> 8) & 0xff])
-            
-        scriptsig = height_script + b'/MonaMinerRTX-Solo/'
-        
+        # BIP34: block height as the first item of the scriptSig
+        scriptsig = encode_script_num_push(self.height) + b'/MonaMinerRTX-Solo/'
+
         tx = bytearray()
         tx += struct.pack('<i', 1) # version 1
         tx += encode_varint(1) # 1 input
@@ -79,25 +88,34 @@ class SoloBlockTemplate:
         tx += encode_varint(len(scriptsig))
         tx += scriptsig
         tx += struct.pack('<I', 0xffffffff) # sequence
-        
+
         # Outputs
         has_witness = bool(self.default_witness_commitment)
         tx += encode_varint(2 if has_witness else 1)
-        
+
         # Output 0: Mining reward to miner wallet
         tx += struct.pack('<Q', self.coinbase_value)
         tx += encode_varint(len(self.script_pubkey))
         tx += self.script_pubkey
-        
+
         # Output 1 (Witness commitment if SegWit)
         if has_witness:
             w_script = bytes.fromhex(self.default_witness_commitment)
             tx += struct.pack('<Q', 0)
             tx += encode_varint(len(w_script))
             tx += w_script
-            
+
         tx += struct.pack('<I', 0) # locktime
         cb_bytes = bytes(tx)
+
+        # The txid (merkle leaf) is always the hash of the non-witness serialization.
+        # In a block, a coinbase carrying a witness commitment must be serialized with
+        # its witness (a single 32-byte reserved value of zeros).
+        if has_witness:
+            witness = encode_varint(1) + encode_varint(32) + b'\x00' * 32
+            self.cb_tx_block_bytes = cb_bytes[:4] + b'\x00\x01' + cb_bytes[4:-4] + witness + cb_bytes[-4:]
+        else:
+            self.cb_tx_block_bytes = cb_bytes
         return cb_bytes, sha256d(cb_bytes)
 
     def _build_merkle_root(self) -> bytes:
@@ -132,7 +150,7 @@ class SoloBlockTemplate:
         block = bytearray()
         block += hdr
         block += encode_varint(1 + len(self.transactions))
-        block += self.cb_tx_bytes
+        block += self.cb_tx_block_bytes
         for t in self.transactions:
             block += bytes.fromhex(t['data'])
         return bytes(block)
@@ -152,6 +170,8 @@ class RpcSoloClient:
         self.wallet_address = wallet_address
         self.cached_script_pubkey: Optional[bytes] = None
         self.last_block_template: Optional[SoloBlockTemplate] = None
+        # True once the node itself said the reward address is invalid for its network (permanent error)
+        self.address_invalid = False
 
     def call(self, method: str, params: list = None, timeout: float = 10.0) -> Dict[str, Any]:
         """Performs a raw JSON-RPC call."""
@@ -222,13 +242,19 @@ class RpcSoloClient:
         Falls back to local P2PKH/P2SH decode if node call fails.
         """
         if not address:
+            self.address_invalid = True
             return None
-            
+
         res = self.call("validateaddress", [address])
-        if "result" in res and res["result"].get("isvalid", False):
-            spk_hex = res["result"].get("scriptPubKey")
-            if spk_hex:
-                return bytes.fromhex(spk_hex)
+        result = res.get("result")
+        if isinstance(result, dict):
+            if result.get("isvalid", False):
+                spk_hex = result.get("scriptPubKey")
+                if spk_hex:
+                    self.address_invalid = False
+                    return bytes.fromhex(spk_hex)
+            else:
+                self.address_invalid = True
         return None
 
     def get_block_template(self) -> Tuple[Optional[SoloBlockTemplate], Optional[str]]:
@@ -239,8 +265,10 @@ class RpcSoloClient:
         if not self.cached_script_pubkey:
             self.cached_script_pubkey = self.resolve_script_pubkey(self.wallet_address)
             if not self.cached_script_pubkey:
-                # If node can't validate (e.g. empty or offline), fallback
-                return None, "受取アドレスの検証に失敗しました。Monacoin Coreに有効なアドレスを指定してください。"
+                if self.address_invalid:
+                    return None, ("受取アドレスがこのノードのネットワークでは無効です。"
+                                  "メインネットのノードには M... / mona1...、Regtest には rmona1... のアドレスを指定してください。")
+                return None, "受取アドレスを検証できませんでした (ノードに接続できません)。"
                 
         res = self.call("getblocktemplate", [{"rules": ["segwit"]}])
         if "error" in res and res["error"]:

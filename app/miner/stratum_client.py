@@ -6,8 +6,6 @@ and block header calculation (Coinbase tx & Merkle Tree).
 
 import socket
 import json
-import time
-import struct
 import hashlib
 import binascii
 import threading
@@ -25,17 +23,25 @@ def calculate_merkle_root(coinbase_hash: bytes, merkle_branches: list[str]) -> b
         current = sha256d(current + branch)
     return current
 
-def diff_to_target(difficulty: float) -> int:
+# Stratum pools scale Lyra2REv2 share difficulty by 2^8 relative to the Bitcoin diff-1 target
+# (node-stratum-pool's `lyra2rev2` multiplier, cpuminer-opt's target factor). Adjust here if a
+# pool is found to use a different convention.
+LYRA2REV2_DIFF_MULTIPLIER = 256.0
+
+def diff_to_target(difficulty: float, multiplier: float = LYRA2REV2_DIFF_MULTIPLIER) -> int:
     """
-    Converts pool difficulty to a 256-bit integer target.
-    True diff 1 target for Bitcoin/Litecoin/Monacoin Lyra2REv2:
-    0x00000000ffff0000000000000000000000000000000000000000000000000000
+    Converts a pool difficulty to a 256-bit integer target.
+    Bitcoin diff-1 target: 0x00000000ffff0000000000000000000000000000000000000000000000000000
     """
     if difficulty <= 0:
         difficulty = 0.0001
     max_target = 0x00000000FFFF0000000000000000000000000000000000000000000000000000
-    target = int(max_target / difficulty)
-    return target
+    target = int(max_target * multiplier / difficulty)
+    return min(target, (1 << 256) - 1)
+
+def target_words(target: int) -> tuple:
+    """Two most significant 32-bit words (hi, lo) of a 256-bit target, as compared by the GPU kernel."""
+    return (target >> 224) & 0xFFFFFFFF, (target >> 192) & 0xFFFFFFFF
 
 class StratumJob:
     def __init__(self, job_id: str, prevhash: str, coinb1: str, coinb2: str,
@@ -98,10 +104,20 @@ class StratumClient:
         self.extranonce2_size = 4
         self.extranonce2_counter = 0
         self.difficulty = 0.05
-        self.target = diff_to_target(self.difficulty)
+        # Pools disagree on the Lyra2REv2 difficulty scale. If shares keep being refused as
+        # "low difficulty" the multiplier is dropped to 1 automatically (see _note_share_result).
+        self.diff_multiplier = LYRA2REV2_DIFF_MULTIPLIER
+        self._low_diff_rejects = 0
+        self.target = diff_to_target(self.difficulty, self.diff_multiplier)
         self.current_job: Optional[StratumJob] = None
         self.req_id = 1
         self.pending_submits = {}
+        self.authorized: Optional[bool] = None  # None until the pool answers mining.authorize
+
+    @property
+    def is_alive(self) -> bool:
+        """False once the connection was closed by either side."""
+        return self._running
 
     def log(self, msg: str, level: str = "info"):
         self.on_log(msg, level)
@@ -123,7 +139,7 @@ class StratumClient:
             self._send({
                 "id": self._next_id(),
                 "method": "mining.subscribe",
-                "params": ["MonaMinerNative/2.1.0"]
+                "params": ["MonaMinerNative/2.1.1"]
             })
             return True
         except Exception as e:
@@ -198,6 +214,7 @@ class StratumClient:
         if msg_id in self.pending_submits:
             cb = self.pending_submits.pop(msg_id)
             is_ok = bool(result is True and not error)
+            self._note_share_result(is_ok, error)
             cb(is_ok, error)
             if is_ok:
                 self.log("✓ Share がプールに承認されました！ (Accepted)", "success")
@@ -222,6 +239,7 @@ class StratumClient:
 
         # 2. Authorize response
         elif msg_id == 2:
+            self.authorized = bool(result)
             if result:
                 self.log(f"Stratum 認証成功: ワーカー '{self.username}'", "success")
             else:
@@ -234,7 +252,7 @@ class StratumClient:
             params = msg.get("params", [0.05])
             if params:
                 self.difficulty = float(params[0])
-                self.target = diff_to_target(self.difficulty)
+                self.target = diff_to_target(self.difficulty, self.diff_multiplier)
                 self.log(f"難易度更新 (Diff): {self.difficulty:.4f} (Target: {self.target:064x})", "info")
 
         # 4. Notification: mining.notify
@@ -254,6 +272,19 @@ class StratumClient:
                 )
                 self.current_job = job
                 self.on_new_job(job, self.target)
+
+    def _note_share_result(self, is_ok: bool, error):
+        if is_ok:
+            self._low_diff_rejects = 0
+            return
+        if "difficult" not in str(error).lower():
+            return
+        self._low_diff_rejects += 1
+        if self._low_diff_rejects >= 3 and self.diff_multiplier > 1.0:
+            self.diff_multiplier = 1.0
+            self.target = diff_to_target(self.difficulty, self.diff_multiplier)
+            self._low_diff_rejects = 0
+            self.log("💡 低難易度で拒否が続いたため、難易度スケールを標準 (×1) に切り替えました。", "warn")
 
     def close(self):
         self._running = False

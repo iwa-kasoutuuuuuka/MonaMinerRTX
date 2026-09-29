@@ -15,7 +15,7 @@ import subprocess
 import urllib.request
 import urllib.error
 
-def rpc(port: int, method: str, params: list = None, timeout: float = 5.0):
+def rpc(port: int, method: str, params: list = None, timeout: float = 5.0, wallet: str = None):
     if params is None:
         params = []
     payload = json.dumps({
@@ -25,8 +25,10 @@ def rpc(port: int, method: str, params: list = None, timeout: float = 5.0):
         "params": params
     }).encode("utf-8")
     auth = base64.b64encode(b"monacoinrpc:rpcpassword").decode("ascii")
+    # With more than one wallet loaded, wallet RPCs must address a wallet explicitly.
+    path = f"wallet/{wallet}" if wallet else ""
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/",
+        f"http://127.0.0.1:{port}/{path}",
         data=payload,
         headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
     )
@@ -120,9 +122,13 @@ def main():
     try:
         wallets = rpc(9402, "listwallets").get("result", [])
         if "regtest_miner" not in wallets:
-            rpc(9402, "createwallet", ["regtest_miner"])
-    except Exception:
-        pass
+            try:
+                rpc(9402, "createwallet", ["regtest_miner"])
+            except Exception:
+                # already exists on disk (second launch) -> just load it
+                rpc(9402, "loadwallet", ["regtest_miner"])
+    except Exception as e:
+        print(f"  -> ウォレット初期化スキップ ({e})")
 
     # Ensure peers connected and exit IBD
     print("[3/3] ピア接続の確立とIBD(初期ブロックダウンロード)の解除...")
@@ -135,13 +141,21 @@ def main():
             pass
         time.sleep(0.5)
 
-    # Generate initial block if chain height is 0
+    # Reward address for the GUI ("受取アドレス"): mainnet addresses are invalid on a regtest node.
+    reward_address = None
+    try:
+        reward_address = rpc(9402, "getnewaddress", wallet="regtest_miner").get("result")
+    except Exception as e:
+        print(f"  -> 受取アドレスの取得に失敗しました ({e})")
+
+    # Monacoin's regtest checks PoW with scrypt below height 60 and with Lyra2REv2 from height 60 on.
+    # The GPU miner implements Lyra2REv2 only, so let the node mine (cheaply) past that point first.
+    lyra2_min_height = 61
     try:
         info = rpc(9402, "getblockchaininfo")["result"]
-        if info["blocks"] == 0:
-            addr = rpc(9402, "getnewaddress").get("result")
-            rpc(9402, "generatetoaddress", [1, addr])
-            print("  -> 初期ジェネシスブロックを生成しました。")
+        if info["blocks"] < lyra2_min_height:
+            rpc(9402, "generatetoaddress", [lyra2_min_height - info["blocks"], reward_address], timeout=120.0)
+            print(f"  -> ブロック高 #{lyra2_min_height} まで初期ブロックを生成しました (Lyra2REv2 区間)。")
     except Exception as e:
         print(f"  -> 初期ブロック生成スキップ ({e})")
 
@@ -155,6 +169,12 @@ def main():
             print("  GPU ソロマイニング待機状態に入りました！")
             print("  MonaMinerRTX GUI の「ソロマイニング」タブで「採掘開始」を押すと、")
             print("  RTX 5080 等のGPUで直接ブロック採掘・即座承認を体験できます。")
+            if reward_address:
+                print()
+                print("  ★ MonaMinerRTX の「モナコイン受取アドレス」には、このRegtest用アドレスを入力してください:")
+                print(f"      {reward_address}")
+                print("    (メインネット用の M... アドレスは Regtest ノードでは無効です)")
+                print()
             print("  終了するには Ctrl+C を押してください。")
             print("==================================================================")
     except Exception as e:

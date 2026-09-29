@@ -1,2 +1,3 @@
 PySide6>=6.6.0
 nvidia-ml-py>=12.535.133
+psutil>=5.9

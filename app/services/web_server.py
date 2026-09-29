@@ -50,7 +50,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div class="container">
     <header>
-        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.1.0</span></h1>
+        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.1.1</span></h1>
         <span id="miner-status" class="badge">確認中...</span>
     </header>
 
@@ -162,7 +162,6 @@ class WebServerRequestHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             status = {}
             cb = WebServerRequestHandler.get_status_callback
@@ -173,7 +172,23 @@ class WebServerRequestHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def _same_origin(self) -> bool:
+        """
+        Blocks cross-site request forgery: a web page the user happens to visit must not be able to
+        start/stop the miner through this LAN-reachable endpoint. Browsers always send `Origin` on
+        cross-origin POSTs; it has to match the `Host` the dashboard was loaded from.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True  # non-browser client (curl etc.)
+        host = self.headers.get("Host", "")
+        return origin.split("://", 1)[-1] == host
+
     def do_POST(self):
+        if not self._same_origin():
+            self.send_response(403)
+            self.end_headers()
+            return
         if self.path == "/api/start":
             cb = WebServerRequestHandler.start_callback
             if cb:

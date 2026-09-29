@@ -9,7 +9,6 @@ from ctypes import (
     c_int, c_uint, c_ulonglong, c_size_t, c_char_p, c_void_p,
     POINTER, byref, create_string_buffer, sizeof
 )
-import sys
 
 # OpenCL Constants
 CL_SUCCESS = 0
@@ -274,6 +273,7 @@ class OpenCLContext:
         self.queue = None
         self.program = None
         self.kernels = {}
+        self.buffers = []
         self._init_context()
 
     def _init_context(self):
@@ -338,6 +338,7 @@ class OpenCLContext:
         buf = self.lib.clCreateBuffer(self.context, flags, size_bytes, None, byref(err))
         if err.value != CL_SUCCESS or not buf:
             raise OpenCLException(err.value, f"clCreateBuffer failed ({size_bytes} bytes)")
+        self.buffers.append(buf)
         return buf
 
     def set_arg_mem(self, kernel, arg_index: int, cl_buf):
@@ -391,6 +392,14 @@ class OpenCLContext:
             except Exception:
                 pass
         self.kernels.clear()
+
+        # Memory objects retain the context: release them first or the context (and JIT program) leaks.
+        for b in self.buffers:
+            try:
+                self.lib.clReleaseMemObject(b)
+            except Exception:
+                pass
+        self.buffers.clear()
 
         if self.program:
             try:

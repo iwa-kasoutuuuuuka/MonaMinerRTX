@@ -1,133 +1,106 @@
-import subprocess, time, os, urllib.request, json, base64, struct, hashlib, sys
-from ctypes import c_uint
+"""
+End-to-end solo mining test on a private regtest chain:
+  Monacoin Core (2 regtest nodes)  <--RPC-->  OpenCLMinerWorker (the app's GPU engine)
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+Every block the GPU finds is validated by the real Monacoin Core (`submitblock`), so a green run
+proves that the kernel, the coinbase/merkle/header builder and the submit path are all correct.
 
-dir1 = os.path.abspath('node/regtest_data/n1')
-dir2 = os.path.abspath('node/regtest_data/n2')
-bin_path = os.path.abspath('node/bin/monacoind.exe')
-p1 = subprocess.Popen([bin_path, f'-datadir={dir1}', '-regtest', '-server=1', '-rpcuser=monacoinrpc', '-rpcpassword=rpcpassword', '-rpcport=9402', '-fallbackfee=0.0001'])
-p2 = subprocess.Popen([bin_path, f'-datadir={dir2}', '-regtest', '-server=1', '-rpcuser=monacoinrpc', '-rpcpassword=rpcpassword', '-rpcport=9403', '-port=20445', '-addnode=127.0.0.1:20444', '-fallbackfee=0.0001'])
-time.sleep(3)
+Run from anywhere:  python node/test_gpu_solo_mine.py [blocks] [gpu|cpu|hybrid]   (default: 3 blocks, gpu)
+"""
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
 
-def rpc(port, method, params=[]):
-    payload = json.dumps({'jsonrpc': '1.0', 'id': 'test', 'method': method, 'params': params}).encode('utf-8')
-    auth = base64.b64encode(b'monacoinrpc:rpcpassword').decode('ascii')
-    req = urllib.request.Request(f'http://127.0.0.1:{port}/', data=payload, headers={'Authorization': f'Basic {auth}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-def sha256d(b: bytes) -> bytes:
-    return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+from PySide6.QtCore import QCoreApplication, Qt
 
-def encode_varint(n: int) -> bytes:
-    if n < 0xfd:
-        return bytes([n])
-    elif n <= 0xffff:
-        return b'\xfd' + struct.pack('<H', n)
-    elif n <= 0xffffffff:
-        return b'\xfe' + struct.pack('<I', n)
-    else:
-        return b'\xff' + struct.pack('<Q', n)
+from app.hardware import HardwareManager
+from app.miner.opencl_miner import OpenCLMinerWorker
+from app.miner.rpc_solo_client import RpcSoloClient
 
-try:
-    gbt = rpc(9402, 'getblocktemplate', [{'rules': ['segwit']}])['result']
-    height = gbt['height']
-    target_high = (int(gbt['target'], 16) >> 224) & 0xffffffff
-    print(f'GBT Height: {height}, Target High: 0x{target_high:08x}')
+RPC1, RPC2, P2P1, P2P2 = 19402, 19403, 29444, 29445
+# Monacoin's regtest checks PoW with scrypt below this height and with Lyra2REv2 from it on.
+LYRA2_MIN_HEIGHT = 61
+# any valid regtest address works as a coinbase destination (the node validates it via RPC)
+REWARD_ADDRESS = "rmona1q3vdvha77mhqlvrq374fp45rcgz02ah2yn22hww"
 
-    addr = rpc(9402, 'getnewaddress')['result']
-    val_info = rpc(9402, 'validateaddress', [addr])['result']
-    script_pubkey = bytes.fromhex(val_info['scriptPubKey'])
 
-    scriptsig = bytes([1, height]) + b'/MonaMinerRTX-GPU/'
-    tx = bytearray()
-    tx += struct.pack('<i', 1)
-    tx += encode_varint(1)
-    tx += b'\x00' * 32
-    tx += struct.pack('<I', 0xffffffff)
-    tx += encode_varint(len(scriptsig))
-    tx += scriptsig
-    tx += struct.pack('<I', 0xffffffff)
+def start_node(exe, datadir, rpc_port, p2p_port, extra=()):
+    return subprocess.Popen(
+        [exe, f"-datadir={datadir}", "-regtest", "-server=1", "-rpcuser=u", "-rpcpassword=p",
+         f"-rpcport={rpc_port}", f"-port={p2p_port}", "-fallbackfee=0.0001", *extra],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    has_witness = 'default_witness_commitment' in gbt and gbt['default_witness_commitment']
-    tx += encode_varint(2 if has_witness else 1)
-    tx += struct.pack('<Q', gbt['coinbasevalue'])
-    tx += encode_varint(len(script_pubkey))
-    tx += script_pubkey
-    if has_witness:
-        w_script = bytes.fromhex(gbt['default_witness_commitment'])
-        tx += struct.pack('<Q', 0)
-        tx += encode_varint(len(w_script))
-        tx += w_script
-    tx += struct.pack('<I', 0)
-    cb_tx_bytes = bytes(tx)
-    cb_hash = sha256d(cb_tx_bytes)
 
-    m_root = cb_hash
+def main(blocks_wanted: int, device: str = "gpu") -> int:
+    exe = os.path.join(ROOT, "node", "bin", "monacoind.exe")
+    workdir = tempfile.mkdtemp(prefix="mona_regtest_")
+    d1, d2 = os.path.join(workdir, "n1"), os.path.join(workdir, "n2")
+    os.makedirs(d1)
+    os.makedirs(d2)
+    procs = [start_node(exe, d1, RPC1, P2P1, ["-listen=1"]),
+             start_node(exe, d2, RPC2, P2P2, [f"-addnode=127.0.0.1:{P2P1}"])]
+    node = RpcSoloClient("127.0.0.1", RPC1, "u", "p")
+    app = QCoreApplication([])
+    worker = None
+    try:
+        for _ in range(60):
+            if node.call("getblockchaininfo").get("result"):
+                break
+            time.sleep(0.5)
+        else:
+            print("node did not start")
+            return 2
+        for _ in range(40):  # getblocktemplate needs at least one peer
+            if node.call("getnetworkinfo")["result"]["connections"] >= 1:
+                break
+            time.sleep(0.5)
 
-    hdr_prefix = bytearray()
-    hdr_prefix += struct.pack('<i', gbt['version'])
-    hdr_prefix += bytes.fromhex(gbt['previousblockhash'])[::-1]
-    hdr_prefix += m_root
-    hdr_prefix += struct.pack('<I', gbt['curtime'])
-    hdr_prefix += bytes.fromhex(gbt['bits'])[::-1]
-    header_76 = bytes(hdr_prefix)
+        node.call("generatetoaddress", [LYRA2_MIN_HEIGHT, REWARD_ADDRESS], timeout=120)
+        start_height = node.call("getblockchaininfo")["result"]["blocks"]
+        print(f"chain prepared, height {start_height}; mining {blocks_wanted} block(s) with device={device} ...")
 
-    # Use OpenCL to mine nonce
-    from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
-    plat = OpenCLBackend.get_platforms()[0]
-    dev = OpenCLBackend.get_devices(plat['id'])[0]
-    dev_name = dev['name']
-    print(f'Mining with GPU: {dev_name}...')
+        worker = OpenCLMinerWorker("eco", "solo", device, "", REWARD_ADDRESS, "test",
+                                   solo_host="127.0.0.1", solo_port=RPC1, solo_user="u", solo_pass="p",
+                                   cpu_threads=8, hardware_mgr=HardwareManager(), selected_gpu_indices=[0])
+        worker.log_message.connect(lambda text, level: print(f"  [{level}] {text}"), Qt.DirectConnection)
+        worker.start()
+        deadline = time.time() + 120
+        while time.time() < deadline and worker.isRunning() and worker.accepted_shares < blocks_wanted:
+            app.processEvents()
+            time.sleep(0.1)
+        worker.stop()
 
-    ctx = OpenCLContext(plat['id'], dev['id'])
-    with open('app/miner/kernels/lyra2v2.cl', 'r', encoding='utf-8') as f:
-        ctx.build_program(f.read())
-    kernel = ctx.get_kernel('search_lyra2v2')
+        height = node.call("getblockchaininfo")["result"]["blocks"]
+        print(f"\naccepted by the node: {worker.accepted_shares}, rejected: {worker.rejected_shares}, "
+              f"chain height {start_height} -> {height}")
+        ok = worker.accepted_shares >= blocks_wanted and worker.rejected_shares == 0 \
+            and height == start_height + worker.accepted_shares
+        print("RESULT:", "PASS" if ok else "FAIL")
+        return 0 if ok else 1
+    finally:
+        for port in (RPC1, RPC2):
+            try:
+                RpcSoloClient("127.0.0.1", port, "u", "p").call("stop")
+            except Exception:
+                pass
+        for p in procs:
+            try:
+                p.wait(20)
+            except Exception:
+                p.kill()
+        shutil.rmtree(workdir, ignore_errors=True)
 
-    buf_header = ctx.create_buffer(19 * 4)
-    buf_found_nonce = ctx.create_buffer(4)
-    buf_found_count = ctx.create_buffer(4)
 
-    c_header = (c_uint * 19).from_buffer_copy(header_76)
-    ctx.write_buffer(buf_header, c_header, 19 * 4)
-    ctx.write_buffer(buf_found_count, (c_uint * 1)(0), 4)
-
-    ctx.set_arg_mem(kernel, 0, buf_header)
-    ctx.set_arg_uint(kernel, 1, 0)
-    ctx.set_arg_uint(kernel, 2, target_high)
-    ctx.set_arg_mem(kernel, 3, buf_found_nonce)
-    ctx.set_arg_mem(kernel, 4, buf_found_count)
-
-    ctx.run_kernel_1d(kernel, 65536, 128)
-    ctx.finish()
-
-    c_cnt = (c_uint * 1)(0)
-    ctx.read_buffer(buf_found_count, c_cnt, 4)
-    print(f'Nonces found: {c_cnt[0]}')
-
-    c_nonce = (c_uint * 1)(0)
-    ctx.read_buffer(buf_found_nonce, c_nonce, 4)
-    found_nonce = c_nonce[0]
-    print(f'Found Nonce: 0x{found_nonce:08x}')
-
-    # Assemble full block with found nonce
-    hdr = header_76 + struct.pack('<I', found_nonce)
-    block = hdr + encode_varint(1) + cb_tx_bytes
-    block_hex = block.hex()
-
-    sub_res = rpc(9402, 'submitblock', [block_hex])
-    print('*** SUBMITBLOCK RESULT ***:', sub_res)
-
-    info = rpc(9402, 'getblockchaininfo')['result']
-    print('*** NEW BLOCKCHAIN HEIGHT ***:', info['blocks'])
-    print('*** BEST BLOCK HASH ***:', info['bestblockhash'])
-finally:
-    for port in [9402, 9403]:
+if __name__ == "__main__":
+    if sys.platform == "win32":
         try:
-            rpc(port, 'stop')
+            sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
-    p1.wait(5)
-    p2.wait(5)
+    sys.exit(main(int(sys.argv[1]) if len(sys.argv) > 1 else 3, sys.argv[2] if len(sys.argv) > 2 else "gpu"))
