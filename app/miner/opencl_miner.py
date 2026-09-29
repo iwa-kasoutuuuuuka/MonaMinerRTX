@@ -7,7 +7,7 @@ Runs in a background QThread and emits live telemetry signals.
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from ctypes import c_uint
 from PySide6.QtCore import QThread, Signal
 
@@ -253,6 +253,7 @@ class OpenCLMinerWorker(QThread):
         t_last_poll = 0.0
         t_hi, t_lo = 0, 0
 
+        cpu_inflight = []      # (nonce count, future, work) of CPU scans still running
         total_hashes_window = 0
         t_start_window = time.perf_counter()
 
@@ -353,16 +354,16 @@ class OpenCLMinerWorker(QThread):
                 pending.append((item, batch, t_launch))
                 cursor += batch
 
-            # CPU threads scan their own slices while the GPUs run
-            cpu_jobs = []
+            # CPU threads scan their own slices in the background. The loop never waits for them: a CPU
+            # chunk takes ~100 ms but a GPU launch only ~15 ms, and blocking here left the GPU idle ~85%.
             if self._cpu_pool:
-                for _ in range(self.cpu_threads):
+                while len(cpu_inflight) < self.cpu_threads:
                     chunk = min(self._cpu_chunk, NONCE_SPACE - cursor)
                     if chunk <= 0:
                         cursor = NONCE_SPACE
                         break
-                    cpu_jobs.append((chunk, self._cpu_pool.submit(
-                        self._cpu_scan, header_76, cursor, chunk, t_hi, t_lo)))
+                    cpu_inflight.append((chunk, self._cpu_pool.submit(
+                        self._cpu_scan, header_76, cursor, chunk, t_hi, t_lo), work))
                     cursor += chunk
 
             # ---- 4. collect results ---------------------------------------------
@@ -392,17 +393,25 @@ class OpenCLMinerWorker(QThread):
                 if solo and self.current_template is None:
                     break  # a block was found: drop the remaining results, fetch a new template
 
-            if cpu_jobs:
-                slowest = 0.0
-                for chunk, future in cpu_jobs:
+            if cpu_inflight:
+                if not pending:
+                    # CPU-only: nothing else paces the loop, so sleep until a chunk finishes
+                    wait([f for _, f, _ in cpu_inflight], timeout=0.05, return_when=FIRST_COMPLETED)
+                still_running = []
+                for job in cpu_inflight:
+                    chunk, future, job_work = job
+                    if not future.done():
+                        still_running.append(job)
+                        continue
                     count, nonces, elapsed = future.result()
-                    slowest = max(slowest, elapsed)
                     total_hashes_window += chunk
                     if nonces and not (solo and self.current_template is None):
-                        self._handle_found("CPU", nonces, work)
-                if slowest > 0.001:
-                    ideal = int(self._cpu_chunk * (TARGET_DISPATCH_S / slowest))
-                    self._cpu_chunk = max(CPU_MIN_CHUNK, min(CPU_MAX_CHUNK, int(self._cpu_chunk * 0.7 + ideal * 0.3)))
+                        self._handle_found("CPU", nonces, job_work)
+                    if elapsed > 0.001:
+                        # from this job's own size: several jobs finishing in one pass ran with older sizes
+                        ideal = int(chunk * (TARGET_DISPATCH_S / elapsed))
+                        self._cpu_chunk = max(CPU_MIN_CHUNK, min(CPU_MAX_CHUNK, int(self._cpu_chunk * 0.7 + ideal * 0.3)))
+                cpu_inflight = still_running
 
             # ---- 5. telemetry (about once per second) ----------------------------
             now = time.perf_counter()
