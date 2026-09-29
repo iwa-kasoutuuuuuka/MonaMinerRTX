@@ -145,10 +145,13 @@ class TestStages(KernelTestBase):
 
 class TestSearchKernel(KernelTestBase):
     build_options = "-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math"
+    kernel_name = "search_lyra2v2"
+    size_multiple = 1
 
     def _search(self, header76, base, count, target_hi, target_lo):
         ctx = self.ctx
-        k = ctx.get_kernel("search_lyra2v2")
+        count = -(-count // self.size_multiple) * self.size_multiple
+        k = ctx.get_kernel(self.kernel_name)
         bh = ctx.create_buffer(76)
         bn = ctx.create_buffer(64)
         bc = ctx.create_buffer(4)
@@ -210,6 +213,13 @@ class TestSearchKernel(KernelTestBase):
         count, _ = self._search(header, 0, 1 << 16, REGTEST_TARGET_HI, REGTEST_TARGET_LO)
         self.assertGreater(count, 30000)   # 32768 expected, sigma = 128
         self.assertLess(count, 36000)
+
+
+class TestSearchKernelNvidia(TestSearchKernel):
+    """The 4-lane warp-shuffle kernel (NVIDIA only; skipped when it cannot be built)."""
+    build_options = TestSearchKernel.build_options + " -DLYRA2_NV_SHFL"
+    kernel_name = "search_lyra2v2_nv"
+    size_multiple = 32
 
 
 if __name__ == "__main__":

@@ -14,6 +14,20 @@ from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
 
 _HEADER = bytes(range(76))
+BUILD_OPTIONS = "-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math"
+
+
+def build_search_kernel(ctx: OpenCLContext, device: dict, source: str):
+    """Builds the fastest nonce-search kernel the device supports. Returns (kernel, variant name).
+    NVIDIA gets the warp-shuffle Lyra2 kernel; its local size (work-group) must be a multiple of 32."""
+    if "NVIDIA" in (device.get("vendor") or "").upper() and device.get("max_work_group_size", 0) >= 128:
+        try:
+            ctx.build_program(source, options=BUILD_OPTIONS + " -DLYRA2_NV_SHFL")
+            return ctx.get_kernel("search_lyra2v2_nv"), "NVIDIA warp-shuffle"
+        except Exception:
+            pass
+    ctx.build_program(source, options=BUILD_OPTIONS)
+    return ctx.get_kernel("search_lyra2v2"), "generic"
 
 
 def _kernel_source() -> str:
@@ -33,8 +47,7 @@ def benchmark_gpu(device: dict, seconds: float = 3.0) -> float:
     """MH/s of one OpenCL device (device dict from OpenCLBackend.get_all_gpu_devices)."""
     ctx = OpenCLContext(device["platform_id"], device["id"])
     try:
-        ctx.build_program(_kernel_source(), options="-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math")
-        kernel = ctx.get_kernel("search_lyra2v2")
+        kernel, _ = build_search_kernel(ctx, device, _kernel_source())
         buf_header = ctx.create_buffer(76)
         buf_nonce = ctx.create_buffer(64)
         buf_count = ctx.create_buffer(4)

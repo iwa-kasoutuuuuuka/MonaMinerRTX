@@ -66,7 +66,7 @@ class ConfigManager:
             "solo_port": 9402,
             "solo_user": "monacoinrpc",
             "solo_pass": "rpcpassword",
-            "device_target": "gpu", # 'gpu', 'cpu', 'hybrid'
+            "device_target": "hybrid", # 'gpu', 'cpu', 'hybrid'
             "cpu_threads": 16,
             "miner_mode": "auto",  # auto, eco, perf, quiet
             "custom_miner_path": "",

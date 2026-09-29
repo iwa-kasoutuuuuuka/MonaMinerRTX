@@ -622,6 +622,193 @@ __kernel void search_lyra2v2(
     }
 }
 
+#ifdef LYRA2_NV_SHFL
+/* ------------------------------------------------------------------ */
+/* NVIDIA fast path: Lyra2 computed by 4 cooperating work-items        */
+/* ------------------------------------------------------------------ */
+/*
+ * The single-thread lyra2_4x4 needs a 1.5 KB matrix per work-item, which cannot live in
+ * registers (spills to local memory, 255 registers, very low occupancy). Here the 4 lanes
+ * of an aligned group share one hash: lane t holds sponge column t (s0..s3 = st[t], st[t+4],
+ * st[t+8], st[t+12]) and block words t, t+4, t+8 of every matrix cell, so M[row][col][k]
+ * (48 x u64, statically indexed) stays in registers. Lanes exchange data with warp shuffles
+ * (inline PTX, NVIDIA only). Requires the local size to be a multiple of 32 (full warps):
+ * the shuffles use the full-warp mask, which is ~14% faster than a per-group mask.
+ */
+static inline u32 l4_shfl32(u32 v, u32 src) {
+    u32 r;
+    asm volatile("shfl.sync.idx.b32 %0, %1, %2, 0x1f, 0xffffffff;" : "=r"(r) : "r"(v), "r"(src));
+    return r;
+}
+static inline u64 l4_shfl(u64 v, u32 src) {
+    return ((u64)l4_shfl32((u32)(v >> 32), src) << 32) | (u64)l4_shfl32((u32)v, src);
+}
+
+#define L4_SEL(i, a0, a1, a2, a3) ((i) == 0u ? (a0) : (i) == 1u ? (a1) : (i) == 2u ? (a2) : (a3))
+
+/* one Blake2b round: column step locally, diagonal step after rotating rows b, c, d across lanes */
+#define L4_ROUND() do { \
+    LYRA_G(s0, s1, s2, s3); \
+    s1 = l4_shfl(s1, base | ((t + 1u) & 3u)); \
+    s2 = l4_shfl(s2, base | ((t + 2u) & 3u)); \
+    s3 = l4_shfl(s3, base | ((t + 3u) & 3u)); \
+    LYRA_G(s0, s1, s2, s3); \
+    s1 = l4_shfl(s1, base | ((t + 3u) & 3u)); \
+    s2 = l4_shfl(s2, base | ((t + 2u) & 3u)); \
+    s3 = l4_shfl(s3, base | ((t + 1u) & 3u)); \
+} while (0)
+
+/* r_k = st[(t + 4k + 11) % 12]: the previous lane's words, rotated for lane 0 */
+#define L4_ROT() do { \
+    u64 q0 = l4_shfl(s0, base | ((t + 3u) & 3u)); \
+    u64 q1 = l4_shfl(s1, base | ((t + 3u) & 3u)); \
+    u64 q2 = l4_shfl(s2, base | ((t + 3u) & 3u)); \
+    r0 = (t == 0u) ? q2 : q0; \
+    r1 = (t == 0u) ? q0 : q1; \
+    r2 = (t == 0u) ? q1 : q2; \
+} while (0)
+
+/* Column loops are expanded by hand: a loop index would make M dynamically indexed (-> stack). */
+#define L4_SETUP_C(IN, IO, OUT, c) do { \
+    s0 ^= M[IN][c][0] + M[IO][c][0]; \
+    s1 ^= M[IN][c][1] + M[IO][c][1]; \
+    s2 ^= M[IN][c][2] + M[IO][c][2]; \
+    L4_ROUND(); \
+    M[OUT][3 - (c)][0] = M[IN][c][0] ^ s0; \
+    M[OUT][3 - (c)][1] = M[IN][c][1] ^ s1; \
+    M[OUT][3 - (c)][2] = M[IN][c][2] ^ s2; \
+    L4_ROT(); \
+    M[IO][c][0] ^= r0; M[IO][c][1] ^= r1; M[IO][c][2] ^= r2; \
+} while (0)
+
+#define L4_SETUP(IN, IO, OUT) do { \
+    L4_SETUP_C(IN, IO, OUT, 0); L4_SETUP_C(IN, IO, OUT, 1); \
+    L4_SETUP_C(IN, IO, OUT, 2); L4_SETUP_C(IN, IO, OUT, 3); \
+} while (0)
+
+#define L4_PUT(r, c) do { if (rowa == (r)) { M[r][c][0] = io0; M[r][c][1] = io1; M[r][c][2] = io2; } } while (0)
+
+/* reducedDuplexRow with rowInOut = M[rowa] selected by value; handles rowa == ROW aliasing */
+#define L4_WANDER_C(ROW, PREV, c) do { \
+    u64 io0 = L4_SEL(rowa, M[0][c][0], M[1][c][0], M[2][c][0], M[3][c][0]); \
+    u64 io1 = L4_SEL(rowa, M[0][c][1], M[1][c][1], M[2][c][1], M[3][c][1]); \
+    u64 io2 = L4_SEL(rowa, M[0][c][2], M[1][c][2], M[2][c][2], M[3][c][2]); \
+    s0 ^= M[PREV][c][0] + io0; \
+    s1 ^= M[PREV][c][1] + io1; \
+    s2 ^= M[PREV][c][2] + io2; \
+    L4_ROUND(); \
+    M[ROW][c][0] ^= s0; M[ROW][c][1] ^= s1; M[ROW][c][2] ^= s2; \
+    if (rowa == (ROW)) { io0 = M[ROW][c][0]; io1 = M[ROW][c][1]; io2 = M[ROW][c][2]; } \
+    L4_ROT(); \
+    io0 ^= r0; io1 ^= r1; io2 ^= r2; \
+    L4_PUT(0u, c); L4_PUT(1u, c); L4_PUT(2u, c); L4_PUT(3u, c); \
+} while (0)
+
+#define L4_WANDER(ROW, PREV) do { \
+    rowa = l4_shfl32((u32)s0, base) & 3u; \
+    L4_WANDER_C(ROW, PREV, 0); L4_WANDER_C(ROW, PREV, 1); \
+    L4_WANDER_C(ROW, PREV, 2); L4_WANDER_C(ROW, PREV, 3); \
+} while (0)
+
+/* Same result as lyra2_4x4. All 4 lanes of a group must call it together with the same pwd. */
+static void lyra2_4x4_l4(const u32 pwd[8], u32 out[8]) {
+    const u32 lane = (u32)get_local_id(0) & 31u;
+    const u32 t = lane & 3u, base = lane & ~3u;
+    u64 M[4][4][3];
+    u64 s0, s1, s2, s3, r0, r1, r2;
+    u32 rowa;
+
+    u64 w = L4_SEL(t, ((u64)pwd[1] << 32) | pwd[0], ((u64)pwd[3] << 32) | pwd[2],
+                      ((u64)pwd[5] << 32) | pwd[4], ((u64)pwd[7] << 32) | pwd[6]);
+    s0 = w; s1 = w;   /* salt == pwd */
+    s2 = L4_SEL(t, 0x6a09e667f3bcc908UL, 0xbb67ae8584caa73bUL, 0x3c6ef372fe94f82bUL, 0xa54ff53a5f1d36f1UL);
+    s3 = L4_SEL(t, 0x510e527fade682d1UL, 0x9b05688c2b3e6c1fUL, 0x1f83d9abfb41bd6bUL, 0x5be0cd19137e2179UL);
+    for (int i = 0; i < 12; i++) L4_ROUND();
+
+    s0 ^= (t == 3u) ? 1UL : 32UL;                                   /* kLen, pwdLen, saltLen, timeCost */
+    s1 ^= L4_SEL(t, 4UL, 4UL, 0x80UL, 0x0100000000000000UL);        /* nRows, nCols, padding */
+    for (int i = 0; i < 12; i++) L4_ROUND();
+
+    #pragma unroll
+    for (int c = 0; c < 4; c++) {
+        M[0][3 - c][0] = s0; M[0][3 - c][1] = s1; M[0][3 - c][2] = s2;
+        L4_ROUND();
+    }
+    #pragma unroll
+    for (int c = 0; c < 4; c++) {
+        s0 ^= M[0][c][0]; s1 ^= M[0][c][1]; s2 ^= M[0][c][2];
+        L4_ROUND();
+        M[1][3 - c][0] = M[0][c][0] ^ s0; M[1][3 - c][1] = M[0][c][1] ^ s1; M[1][3 - c][2] = M[0][c][2] ^ s2;
+    }
+
+    L4_SETUP(1, 0, 2);
+    L4_SETUP(2, 1, 3);
+
+    L4_WANDER(0u, 3);
+    L4_WANDER(1u, 0);
+    L4_WANDER(2u, 1);
+    L4_WANDER(3u, 2);
+
+    s0 ^= L4_SEL(rowa, M[0][0][0], M[1][0][0], M[2][0][0], M[3][0][0]);
+    s1 ^= L4_SEL(rowa, M[0][0][1], M[1][0][1], M[2][0][1], M[3][0][1]);
+    s2 ^= L4_SEL(rowa, M[0][0][2], M[1][0][2], M[2][0][2], M[3][0][2]);
+    for (int i = 0; i < 12; i++) L4_ROUND();
+
+    #pragma unroll
+    for (int j = 0; j < 4; j++) {
+        u64 v = l4_shfl(s0, base | (u32)j);
+        out[2 * j] = (u32)v;
+        out[2 * j + 1] = (u32)(v >> 32);
+    }
+}
+
+/* One nonce per work-item; the 4 lanes of a group run Lyra2 together for each lane's nonce in turn. */
+static void lyra2rev2_hash_l4(const u32 header[20], u32 out[8]) {
+    const u32 lane = (u32)get_local_id(0) & 31u;
+    const u32 t = lane & 3u, base = lane & ~3u;
+    u32 a[8], b[8], mine[8];
+    blake256_80(header, a);
+    keccak256_32(a, b);
+    cubehash256_32(b, a);
+    for (int j = 0; j < 4; j++) {
+        u32 in8[8], o[8];
+        #pragma unroll
+        for (int i = 0; i < 8; i++) in8[i] = l4_shfl32(a[i], base | (u32)j);
+        lyra2_4x4_l4(in8, o);
+        #pragma unroll
+        for (int i = 0; i < 8; i++) mine[i] = (t == (u32)j) ? o[i] : mine[i];
+    }
+    skein256_32(mine, a);
+    cubehash256_32(a, b);
+    bmw256_32(b, out);
+}
+
+/* Same interface and results as search_lyra2v2. */
+__kernel void search_lyra2v2_nv(
+    __constant u32 *header_prefix,
+    const u32 base_nonce,
+    const u32 target_hi,
+    const u32 target_lo,
+    __global u32 *found_nonce,
+    __global u32 *found_count
+) {
+    u32 nonce = base_nonce + (u32)get_global_id(0);
+
+    u32 header[20];
+    #pragma unroll
+    for (int i = 0; i < 19; i++) header[i] = header_prefix[i];
+    header[19] = nonce;
+
+    u32 h[8];
+    lyra2rev2_hash_l4(header, h);
+
+    if (h[7] < target_hi || (h[7] == target_hi && h[6] <= target_lo)) {
+        u32 idx = atomic_inc(found_count);
+        if (idx < 16u) found_nonce[idx] = nonce;
+    }
+}
+#endif /* LYRA2_NV_SHFL */
+
 #ifdef DEBUG_STAGES
 /* Test entry: writes the output of every stage (7 x 8 words) for one header. */
 __kernel void debug_stages(__constant u32 *header80, __global u32 *out) {

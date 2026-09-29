@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
 
         self.current_mode = self.config_mgr.get("miner_mode", "auto")
         self.target_type = self.config_mgr.get("mining_target", "pool") # 'pool' or 'solo'
-        self.device_target = self.config_mgr.get("device_target", "gpu") # 'gpu', 'cpu', 'hybrid'
+        self.device_target = self.config_mgr.get("device_target", "hybrid") # 'gpu', 'cpu', 'hybrid'
         self.mode_cards = {}
         self.mining_start_time = None
         self.auto_started_by_idle = False
@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
         self.dev_group.addButton(self.btn_dev_cpu, 2)
         self.dev_group.addButton(self.btn_dev_hybrid, 3)
 
-        saved_dev = self.config_mgr.get("device_target", "gpu")
+        saved_dev = self.config_mgr.get("device_target", "hybrid")
         if not has_gpu:
             self.btn_dev_cpu.setChecked(True)
         elif saved_dev == "cpu":

@@ -12,6 +12,7 @@ from ctypes import c_uint
 from PySide6.QtCore import QThread, Signal
 
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
+from app.miner.benchmark import build_search_kernel
 from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
 from app.miner.stratum_client import StratumClient, StratumJob, target_words
 from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
@@ -144,8 +145,8 @@ class OpenCLMinerWorker(QThread):
                 item = {"ctx": ctx, "dev": d, "last_key": None}
                 self.ctx_list.append(item)
 
-                ctx.build_program(kernel_src, options="-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math")
-                item["kernel"] = ctx.get_kernel("search_lyra2v2")
+                item["kernel"], variant = build_search_kernel(ctx, d, kernel_src)
+                self.log_message.emit(f"GPU #{d['global_index']} カーネル: {variant}", "info")
 
                 local_wg = max(1, min(128, d.get("max_work_group_size", 128)))
                 init_batch = max(local_wg * 16, 1 << min(20, max(16, intensity)))

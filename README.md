@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **NVIDIA GeForce (RTX 50/40/30/20 & GTX 16/10)、AMD Radeon (RX 7000/6000/5000/Vega/Polaris)、ノートPC向けGPU、および多コアCPU（Ryzen / Intel）** に完全対応した、モナコイン（Monacoin / アルゴリズム: Lyra2REv2）向けハイブリッドGUIマイナーです。
-**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。GPUカーネルは本物の Lyra2REv2（Blake256 → Keccak → CubeHash → Lyra2 → Skein → CubeHash → BMW）で、Monacoin Core 本体の PoW 判定と一致することを検証済みです（RTX 5080 実測 約 65〜73 MH/s）。さらに「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しています。**
+**外部の `ccminer.exe` や追加インストーラーに一切依存せず、Windows標準の OpenCL ドライバと直接対話して高速並列採掘を行う「独自内蔵GPUマイナーエンジン」を標準搭載。GPUカーネルは本物の Lyra2REv2（Blake256 → Keccak → CubeHash → Lyra2 → Skein → CubeHash → BMW）で、Monacoin Core 本体の PoW 判定と一致することを検証済みです（RTX 5080 実測 約 **263 MH/s** - v2.2.0以降、NVIDIA 4スレッド協調 Lyra2 カーネル搭載）。さらに「スマート・アイドル自動採掘」「リアルタイム電気代・収益性計算機」「Multi-GPU並列採掘」「スマホ対応Web監視ダッシュボード」「Discord通知」「NVML直接制御」を完全統合しています。**
 
 </div>
 
@@ -26,9 +26,9 @@
 
 2. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度JIT最適化)**:
    - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2 カーネルを実行時JITコンパイル。
-   - **本物の Lyra2REv2 実装 (v2.1.1)**: 7段すべて（Blake256 / Keccak256 / CubeHash256 / Lyra2 4x4 / Skein-512→256 / CubeHash256 / BMW256）をリファレンス実装とビット単位で照合。Monacoin Core の regtest ノードが採掘したブロックの Nonce とも一致します（`tests/test_lyra2v2_kernel.py`）。
-   - **実測ハッシュレート**: RTX 5080 で約 **65〜73 MH/s**（単一GPU・バッチ約100万スレッド）。現状のカーネルは正しさを優先した素直な実装で（Lyra2 行列は 1スレッドあたり約1.5KBのプライベート配列）、最適化の余地があります。
-   - **コンパイラ最適化フラグ**: `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math`、ローカルワークグループサイズ 128。
+   - **本物の Lyra2REv2 実装 (v2.2.0+)**: 7段すべて（Blake256 / Keccak256 / CubeHash256 / Lyra2 4x4 / Skein-512→256 / CubeHash256 / BMW256）をリファレンス実装とビット単位で照合。Monacoin Core の regtest ノードが採掘したブロックの Nonce とも一致します（`tests/test_lyra2v2_kernel.py`）。
+   - **実測ハッシュレート**: RTX 5080 で約 **263 MH/s**（単一GPU・バッチ約419万スレッド、ハイブリッド 16CPU スレッド併行）。**v2.2.0 で実装した NVIDIA 専用最適化**: 4スレッド協調 Lyra2 カーネル（`search_lyra2v2_nv`、`-DLYRA2_NV_SHFL` で有効化）が、warp シャッフル（inline PTX `shfl.sync`）を用いてスレッド間でデータを交換し、Lyra2 の行列（1.5 KB/スレッド）すべてをレジスタに収容（168 レジスタ、スピルなし）。従来の 255 レジスタ + 2.8 KB スタック + 1.3 KB スピルから大幅削減し、同時実行スレッド数（占有率）を向上。AMD GPU は従来の汎用カーネル `search_lyra2v2` で動作。
+   - **コンパイラ最適化フラグ**: `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math`、ローカルワークグループサイズ 128。NVIDIA の場合はワークグループサイズが 32 の倍数である必要があります。
    - **PCIe転送の極小化 (ヘッダーキャッシュ)**: 不変ヘッダーの再転送を撤廃し、適応型ディスパッチ制御（~100ms）で無駄掘り（Stale Shares）を抑制。
    - **Multi-GPU**: 全GPUに同時にカーネルを投入し、共有ノンスカーソルで探索範囲の重複を排除。ノンス空間（2³²）を使い切ると extranonce2（プール）／ブロックテンプレート（ソロ）を更新します。
 
@@ -71,10 +71,10 @@
     - **プールマイニング (Stratum)**: 国内代表プール（VIPPOOL:8888）へ接続し、安定して少額ずつの報酬を獲得。
     - **ソロマイニング (Monacoin Core RPC)**: ローカルの Monacoin Core (`127.0.0.1:9402`) と直接連携。ブロック発見時に **3.125 MONA + 取引手数料の全額（100%）** を独占獲得。
 
-11. **💻 採掘デバイス選択 (GPU / CPU / ハイブリッド)**:
-    - ⚡ **GPU のみ**: 内蔵 OpenCL エンジンで採掘します（RTX 5080 で約 65〜73 MH/s）。
-    - 🧠 **CPU のみ**: 内蔵のネイティブ CPU エンジン（`app/miner/native/lyra2re2_cpu.dll`）で、指定スレッド数だけ並列に採掘します。実測は 1 スレッド約 0.15〜0.25 MH/s 程度です。
-    - 🚀 **ハイブリッド (GPU + CPU)**: GPU と CPU が同じ仕事（ヘッダー）を重複なく分担して同時に採掘します（CPU の寄与は GPU の数%です）。
+11. **💻 採掘デバイス選択 (GPU / CPU / ハイブリッド)** - デフォルト: ハイブリッド 16 スレッド:
+    - ⚡ **GPU のみ**: 内蔵 OpenCL エンジンで採掘します（RTX 5080 で約 263 MH/s、NVIDIA 4スレッド協調カーネル使用時）。
+    - 🧠 **CPU のみ**: 内蔵のネイティブ CPU エンジン（`app/miner/native/lyra2re2_cpu.dll`）で、指定スレッド数だけ並列に採掘します。実測は 1 スレッド約 0.15〜0.25 MH/s、16 スレッドで約 3.0 MH/s 程度です。
+    - 🚀 **ハイブリッド (GPU + CPU)**: GPU と CPU が同じ仕事（ヘッダー）を重複なく分担して同時に採掘します。CPU の寄与は GPU の 1% 程度ですが、PC がアイドル時に効率的に使用します。**v2.2.0 からデフォルトで有効（16 スレッド）**。
     - スレッド数スライダー & プリセットボタンで CPU スレッド数を調整できます。
     - **予想ハッシュレートは実測ベースです**: 「⚙️ 詳細設定 → 🔧 ハードウェア制御」の「📊 ベンチマーク実行」（約10秒）で GPU/CPU の実際の速度を計測し、結果を保存して各プロファイルの「予想」に反映します（未測定のときは「未測定」と表示。省電力/静音は電力比による目安）。
 
