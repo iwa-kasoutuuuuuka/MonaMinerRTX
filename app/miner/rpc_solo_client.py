@@ -208,6 +208,12 @@ class RpcSoloClient:
                 return err_json
             except Exception:
                 return {"error": {"code": e.code, "message": str(e)}}
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, ConnectionRefusedError):
+                return {"error": {"code": -1, "message": (
+                    f"{self.host}:{self.port} で Monacoin Core ノードが起動していません。"
+                    "「⚡ 本番ノード起動」(またはテスト用の「即座テスト環境起動」) でノードを起動してから再度お試しください。")}}
+            return {"error": {"code": -1, "message": str(e)}}
         except Exception as e:
             return {"error": {"code": -1, "message": str(e)}}
 
