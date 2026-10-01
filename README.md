@@ -5,8 +5,8 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.2.2-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.2.zip-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)
+[![Release](https://img.shields.io/badge/Release-v2.2.2_(2026--09--30更新)-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.2.zip_(2026--09--30更新)-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -426,9 +426,9 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 ### 📥 ダウンロード (直リンク)
 
-| 対象OS | ファイル名 | 容量 | ダウンロードリンク (Direct Download) |
-|:---|:---|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.2.2)** | `MonaMinerRTX_Portable_v2.2.2.zip` | 約 69.6 MB | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)** |
+| 対象OS | ファイル名 | 容量 | 最終更新日 | ダウンロードリンク (Direct Download) |
+|:---|:---|:---:|:---:|:---:|
+| 🪟 **Windows 64bit ポータブル版 (v2.2.2)** | `MonaMinerRTX_Portable_v2.2.2.zip` | 約 69.6 MB | 2026年9月30日 | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
