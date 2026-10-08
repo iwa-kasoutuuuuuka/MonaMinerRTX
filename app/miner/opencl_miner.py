@@ -24,6 +24,7 @@ MAX_BATCH = 4194304
 CPU_MIN_CHUNK = 64          # nonces per CPU thread and launch (adapted to ~100 ms)
 CPU_MAX_CHUNK = 1 << 20
 CPU_WATT_PER_THREAD = 5.0   # rough estimate, only used when no power sensor is available
+RPC_ERROR_LOG_INTERVAL_S = 30.0  # solo: an unchanged template error is repeated at most this often
 POOL_DEFAULT_HOST = "stratum1.vippool.net"
 POOL_DEFAULT_PORT = 8888
 
@@ -252,6 +253,8 @@ class OpenCLMinerWorker(QThread):
         tpl_serial = 0
         t_last_poll = 0.0
         t_hi, t_lo = 0, 0
+        rpc_err = None         # solo: last template error (logged once, then every RPC_ERROR_LOG_INTERVAL_S)
+        t_rpc_err_log = 0.0
 
         cpu_inflight = []      # (nonce count, future, work) of CPU scans still running
         total_hashes_window = 0
@@ -271,9 +274,17 @@ class OpenCLMinerWorker(QThread):
                         if self.solo_client.address_invalid:
                             self.log_message.emit(f"[Solo RPC] {err}", "error")
                             return
-                        self.log_message.emit(f"[Solo RPC] {err}", "warn")
+                        # The node may stay down (or keep syncing) for a long time: repeating the same
+                        # line twice a second floods the log view.
+                        if err != rpc_err or (now_mono - t_rpc_err_log) >= RPC_ERROR_LOG_INTERVAL_S:
+                            self.log_message.emit(f"[Solo RPC] {err}", "warn")
+                            rpc_err = err
+                            t_rpc_err_log = now_mono
                         self._sleep(0.5)
                         continue
+                    if rpc_err is not None:
+                        self.log_message.emit("[Solo RPC] ノードとの通信が回復しました。採掘を再開します。", "success")
+                        rpc_err = None
                     new_tip = self.current_template is None or tpl.prev_hash_hex != self.current_template.prev_hash_hex
                     if new_tip:
                         self.log_message.emit(
@@ -405,7 +416,9 @@ class OpenCLMinerWorker(QThread):
                         continue
                     count, nonces, elapsed = future.result()
                     total_hashes_window += chunk
-                    if nonces and not (solo and self.current_template is None):
+                    # Solo: a scan started on an older template (the tip moved, or a block was just
+                    # submitted) can only produce a block the node refuses, so its result is dropped.
+                    if nonces and not (solo and job_work["tpl"] is not self.current_template):
                         self._handle_found("CPU", nonces, job_work)
                     if elapsed > 0.001:
                         # from this job's own size: several jobs finishing in one pass ran with older sizes
