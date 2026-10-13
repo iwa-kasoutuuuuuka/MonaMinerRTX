@@ -115,6 +115,27 @@ static void blake256_80(const u32 header[20], u32 out[8]) {
     for (int i = 0; i < 8; i++) out[i] = BSWAP32(h[i]);
 }
 
+/* Same as blake256_80, but the first compression (header bytes 0..63, nonce-independent) was done
+ * once on the host: mid = its chaining value, tail = header words 16..19 (LE decoded, 19 = nonce). */
+static void blake256_80_mid(const u32 mid[8], const u32 tail[4], u32 out[8]) {
+    u32 h[8], m[16];
+    #pragma unroll
+    for (int i = 0; i < 8; i++) h[i] = mid[i];
+
+    #pragma unroll
+    for (int i = 0; i < 4; i++) m[i] = BSWAP32(tail[i]);
+    m[4] = 0x80000000u;
+    #pragma unroll
+    for (int i = 5; i < 13; i++) m[i] = 0u;
+    m[13] = 1u;
+    m[14] = 0u;
+    m[15] = 640u;
+    blake256_compress(h, m, 640u, 0u);
+
+    #pragma unroll
+    for (int i = 0; i < 8; i++) out[i] = BSWAP32(h[i]);
+}
+
 /* ------------------------------------------------------------------ */
 /* Keccak-256 (original Keccak padding 0x01), 32-byte message          */
 /* ------------------------------------------------------------------ */
@@ -138,6 +159,9 @@ static void keccak256_32(const u32 in[8], u32 out[8]) {
     st[4] = 0x01UL;                       /* padding: 0x01 right after the message */
     st[16] ^= 0x8000000000000000UL;       /* last bit of the 136-byte rate block */
 
+    /* Fully unrolled: the rho-pi permutation then costs no register moves at a loop back-edge
+     * (+1% on the whole hash on RTX 5080; no change in register count). */
+    #pragma unroll
     for (int round = 0; round < 24; round++) {
         u64 bc[5];
         #pragma unroll
@@ -576,11 +600,11 @@ static void bmw256_32(const u32 in[8], u32 out[8]) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Full Lyra2REv2 PoW hash of an 80-byte header (20 LE words)          */
+/* Full Lyra2REv2 PoW hash: Blake midstate + last 4 header words       */
 /* ------------------------------------------------------------------ */
-static void lyra2rev2_hash(const u32 header[20], u32 out[8]) {
+static void lyra2rev2_hash(const u32 mid[8], const u32 tail[4], u32 out[8]) {
     u32 a[8], b[8];
-    blake256_80(header, a);
+    blake256_80_mid(mid, tail, a);
     keccak256_32(a, b);
     cubehash256_32(b, a);
     lyra2_4x4(a, b);
@@ -591,7 +615,9 @@ static void lyra2rev2_hash(const u32 header[20], u32 out[8]) {
 
 /*
  * Nonce search kernel.
- *   header_prefix : 19 words (76 bytes, little-endian decoded)
+ *   header_prefix : 27 words: the 76-byte header prefix (19 words, little-endian decoded) followed
+ *                   by the 8-word Blake-256 midstate of its first 64 bytes (computed on the host,
+ *                   see app/miner/blake_midstate.py); saves the nonce-independent half of Blake
  *   target_hi/lo  : the two most significant 32-bit words of the 256-bit target
  *                   (word 7 = most significant, word 6 = next)
  *   found_nonce   : up to 16 winning nonces
@@ -608,13 +634,15 @@ __kernel void search_lyra2v2(
 ) {
     u32 nonce = base_nonce + (u32)get_global_id(0);
 
-    u32 header[20];
+    u32 mid[8], tail[4];
     #pragma unroll
-    for (int i = 0; i < 19; i++) header[i] = header_prefix[i];
-    header[19] = nonce;
+    for (int i = 0; i < 8; i++) mid[i] = header_prefix[19 + i];
+    #pragma unroll
+    for (int i = 0; i < 3; i++) tail[i] = header_prefix[16 + i];
+    tail[3] = nonce;
 
     u32 h[8];
-    lyra2rev2_hash(header, h);
+    lyra2rev2_hash(mid, tail, h);
 
     if (h[7] < target_hi || (h[7] == target_hi && h[6] <= target_lo)) {
         u32 idx = atomic_inc(found_count);
@@ -823,11 +851,11 @@ static void cubehash256_32_imad(const u32 in[8], u32 out[8], u32 one) {
 #endif
 
 /* One nonce per work-item; the 4 lanes of a group run Lyra2 together for each lane's nonce in turn. */
-static void lyra2rev2_hash_l4(const u32 header[20], u32 out[8], u32 one) {
+static void lyra2rev2_hash_l4(const u32 mid[8], const u32 tail[4], u32 out[8], u32 one) {
     const u32 lane = (u32)get_local_id(0) & 31u;
     const u32 t = lane & 3u, base = lane & ~3u;
     u32 a[8], b[8], mine[8];
-    blake256_80(header, a);
+    blake256_80_mid(mid, tail, a);
     keccak256_32(a, b);
     CUBE_NV(b, a);
     for (int j = 0; j < 4; j++) {
@@ -855,13 +883,15 @@ __kernel void search_lyra2v2_nv(
 ) {
     u32 nonce = base_nonce + (u32)get_global_id(0);
 
-    u32 header[20];
+    u32 mid[8], tail[4];
     #pragma unroll
-    for (int i = 0; i < 19; i++) header[i] = header_prefix[i];
-    header[19] = nonce;
+    for (int i = 0; i < 8; i++) mid[i] = header_prefix[19 + i];
+    #pragma unroll
+    for (int i = 0; i < 3; i++) tail[i] = header_prefix[16 + i];
+    tail[3] = nonce;
 
     u32 h[8];
-    lyra2rev2_hash_l4(header, h, cube_one);
+    lyra2rev2_hash_l4(mid, tail, h, cube_one);
 
     if (h[7] < target_hi || (h[7] == target_hi && h[6] <= target_lo)) {
         u32 idx = atomic_inc(found_count);

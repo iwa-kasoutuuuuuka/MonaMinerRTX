@@ -5,8 +5,8 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.2.2_(2026--09--30更新)-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.2.zip_(2026--09--30更新)-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)
+[![Release](https://img.shields.io/badge/Release-v2.2.3_(2026--10--08更新)-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.3.zip_(2026--10--08更新)-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.3.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 🌟 主な特徴 (v2.2.2)
+## 🌟 主な特徴 (v2.2.3)
 
 1. **🏠 2階層ナビゲーションGUI (かんたん採掘 ＆ 詳細設定・高度なツール)**:
    - 認知的過負荷を解消し、普段使いに必要な「受取アドレス入力」「デバイス・モード選択」「採掘開始」を1画面に集約。
@@ -27,9 +27,9 @@
 2. **⚡ 独自内蔵 OpenCL マイナーエンジン (外部バイナリ完全不要 & 高度JIT最適化)**:
    - Windows標準の `OpenCL.dll` と `ctypes` 経由で直接バインドし、GPU内部で Lyra2REv2 カーネルを実行時JITコンパイル。
    - **本物の Lyra2REv2 実装 (v2.2.0+)**: 7段すべて（Blake256 / Keccak256 / CubeHash256 / Lyra2 4x4 / Skein-512→256 / CubeHash256 / BMW256）をリファレンス実装とビット単位で照合。Monacoin Core の regtest ノードが採掘したブロックの Nonce とも一致します（`tests/test_lyra2v2_kernel.py`）。
-   - **実測ハッシュレート**: RTX 5080 で約 **285 MH/s**（単一GPU・バッチ約419万スレッド、ハイブリッド 16CPU スレッド併行）。**v2.2.0 で実装した NVIDIA 専用最適化**: 4スレッド協調 Lyra2 カーネル（`search_lyra2v2_nv`、`-DLYRA2_NV_SHFL` で有効化）が、warp シャッフル（inline PTX `shfl.sync`）を用いてスレッド間でデータを交換し、Lyra2 の行列（1.5 KB/スレッド）すべてをレジスタに収容（168 レジスタ、スピルなし）。従来の 255 レジスタ + 2.8 KB スタック + 1.3 KB スピルから大幅削減し、同時実行スレッド数（占有率）を向上。**RTX 50 シリーズ (SM120) ではさらに CubeHash の加算を IMAD（乗算加算命令）で実行し、ALU パイプと FMA パイプに負荷を分散（約 +8%、`-DLYRA2_NV_CUBE_IMAD`。GPU 世代は OpenCL の NVIDIA 拡張で判定し、SM120 以外では従来の CubeHash を使用）。**AMD GPU は従来の汎用カーネル `search_lyra2v2` で動作。
+   - **実測ハッシュレート**: RTX 5080 で約 **285 MH/s**（単一GPU・バッチ約419万スレッド、ハイブリッド 16CPU スレッド併行）。**v2.2.0 で実装した NVIDIA 専用最適化**: 4スレッド協調 Lyra2 カーネル（`search_lyra2v2_nv`、`-DLYRA2_NV_SHFL` で有効化）が、warp シャッフル（inline PTX `shfl.sync`）を用いてスレッド間でデータを交換し、Lyra2 の行列（1.5 KB/スレッド）すべてをレジスタに収容（168 レジスタ、スピルなし）。従来の 255 レジスタ + 2.8 KB スタック + 1.3 KB スピルから大幅削減し、同時実行スレッド数（占有率）を向上。**RTX 50 シリーズ (SM120) ではさらに CubeHash の加算を IMAD（乗算加算命令）で実行し、ALU パイプと FMA パイプに負荷を分散（約 +8%、`-DLYRA2_NV_CUBE_IMAD`。GPU 世代は OpenCL の NVIDIA 拡張で判定し、SM120 以外では従来の CubeHash を使用）。**AMD GPU は従来の汎用カーネル `search_lyra2v2` で動作。**Blake256 ミッドステート事前計算**: ヘッダー先頭 64 バイトはノンスに依存しないため、Blake256 の 1 回目の圧縮をホスト側で 1 度だけ計算して GPU に渡し、カーネルは 2 回目（ノンスを含むブロック）だけを実行します（約 +2%、RTX 5080 実測 285 → 292 MH/s）。
    - **コンパイラ最適化フラグ**: `-cl-mad-enable -cl-no-signed-zeros -cl-fast-relaxed-math`、ローカルワークグループサイズ 128。NVIDIA の場合はワークグループサイズが 32 の倍数である必要があります。
-   - **PCIe転送の極小化 (ヘッダーキャッシュ)**: 不変ヘッダーの再転送を撤廃し、適応型ディスパッチ制御（~100ms）で無駄掘り（Stale Shares）を抑制。
+   - **PCIe転送の極小化 (ヘッダーキャッシュ) と GPU 起動キュー**: 不変ヘッダーの再転送を撤廃し、適応型ディスパッチ制御（~100ms、1 回最大 6,700 万ノンス）で無駄掘り（Stale Shares）を抑制。各 GPU のコマンドキューには常に次のカーネルを先に積んでおき（深さ 2）、結果の読み戻し・ソロの RPC 問い合わせ・テレメトリなどホスト側の処理中も GPU が止まらないようにしています（OpenCL イベントで前の起動の完了のみを待機）。
    - **Multi-GPU**: 全GPUに同時にカーネルを投入し、共有ノンスカーソルで探索範囲の重複を排除。ノンス空間（2³²）を使い切ると extranonce2（プール）／ブロックテンプレート（ソロ）を更新します。
 
 3. **🤖 スマート・アイドル自動採掘 (PC離席時のみ自動スタート)**:
@@ -44,7 +44,7 @@
    - 搭載されているすべてのGPU（NVIDIA RTX / AMD Radeonの混載にも対応）を自動検出し、選択したGPU群でNonce空間を重複なく分割並列探索。リグや複数GPU搭載PCの能力を余すところなく引き出します。
 
 6. **🌐 スマホ対応 Web監視ダッシュボード & Discord通知**:
-   - 外部ライブラリ不要の超軽量HTTPサーバーを内蔵（デフォルトポート: `8888`）。同一LAN内のスマートフォンや別PCのブラウザから、リアルタイムのハッシュレート、温度、ファン、電気代、最新ログを監視し、遠隔で開始/停止が可能。
+   - 外部ライブラリ不要の超軽量HTTPサーバーを内蔵（デフォルトポート: `8888`）。ブラウザからリアルタイムのハッシュレート、温度、ファン、電気代、最新ログを監視し、開始/停止が可能。既定ではこのPCからのみ閲覧でき、「LAN に公開する」を有効にすると同一LAN内のスマートフォンや別PCからも利用できます（ログイン機能はないため、信頼できるネットワークでのみ有効にしてください）。
    - Discord Webhook URL を登録すれば、マイニング開始/停止やシェア承認を自動でDiscordチャンネルへ通知。
 
 7. **🔧 GPUハードウェア直接制御 (NVML / Power Limit & Fan)**:
@@ -95,7 +95,7 @@ v2.1.0 では、機能追加による煩雑さを解消するため、画面構�
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [MonaMiner RTX / RX v2.2.2] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
+│ [MonaMiner RTX / RX v2.2.3] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
 ├────────────────────────────────────────────────────────────────────────┤
 │ [ハッシュレート] [消費電力] [推定電気代(1日)] [電力効率] [温度/ファン] [承認シェア]│ ◄ 常時固定テレメトリー
 ├────────────────────────────────────────────────────────────────────────┤
@@ -194,7 +194,8 @@ v2.1.0 では、機能追加による煩雑さを解消するため、画面構�
   - お住まいの電力会社料金単価（円/kWh）やMONA参考価格を入力すると、採掘中のリアルタイム電気代、24時間/月間コスト、推定純利益が自動算出されます。
 
 * **サブタブ 4: 🌐 遠隔監視・通知**:
-  - 「内蔵Webダッシュボード」をONにして「ブラウザでダッシュボードを開く」を押すと、スマホや別PCのブラウザから遠隔監視・遠隔操作が可能です（ポート `8888`）。
+  - 「内蔵Webダッシュボード」をONにして「ブラウザでダッシュボードを開く」を押すと、このPCのブラウザで監視・操作できます（ポート `8888`）。
+  - スマホや別PCから使う場合は **「LAN に公開する」** にチェックを入れ、`http://<このPCのIPアドレス>:8888` を開きます。ダッシュボードにはログイン機能がないため、自宅など信頼できるネットワークでのみ有効にしてください（v2.2.3 から既定は OFF）。
   - Discord Webhook URL を登録すれば、マイニング開始/停止やエラー発生時に自動通知されます。
 
 * **サブタブ 5: 🔧 GPUハードウェア (Multi-GPU)**:
@@ -294,15 +295,24 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
 
 世界中のモナコイン・ブロックチェーンと同期して、本物の MONA 報酬を独占獲得する実践手順です。
 
+#### 🚀 ワンクリック起動 (v2.2.3〜)
+次のファイルをダブルクリックするだけで、**ノードの起動 → 同期の確認 → ソロ採掘の開始** までを自動で行います。
+
+* ポータブル版: `ソロ採掘を起動する.bat`
+* ソースから実行: `run_solo.bat`（中身は `python main.py --solo`）
+
+ノードが停止中なら別ウィンドウで起動し、初回のブロック同期中は完了まで待ってから採掘を始めます（進捗は同期バーに表示）。すでにノードが動いていればそのまま使います。アプリを閉じてもノードは動き続けるので、止めるときは `node\stop_nodes.bat` を実行してください。以下の手順 1〜3 は、同じことを手動で行う場合の説明です。
+
 #### 手順 1: 最適化ノードの起動とブロック同期
-本ツールには、マイニング用にチューニングされた設定ファイル（`node/monacoin.conf`）と起動スクリプトが同梱されています。
+本ツールには、マイニング用にチューニングされた設定ファイルのひな形（`node/monacoin.conf.template`）と起動スクリプトが同梱されています。実際に使われる `node/monacoin.conf` は初回起動時にひな形から自動生成されます。
 
 * **起動スクリプトのフルパス**:
   ```text
   C:\Users\Gisa_M3\.gemini\antigravity\scratch\mona-miner-gui\node\start_mainnet_solo.bat
   ```
   - アプリ画面上の「**⚡ 本番ノード起動**」ボタン、またはエクスプローラーから上記バッチをダブルクリックして起動します。
-  - 同梱設定: `server=1`, `rpcuser=monacoinrpc`, `rpcpassword=rpcpassword`, `rpcport=9402`, `dbcache=4096`, `txindex=1`。
+  - 同梱設定: `server=1`, `rpcuser=monacoinrpc`, `rpcport=9402`, `dbcache=4096`, `txindex=1`。
+  - **RPC パスワードはPCごとに自動生成**: MonaMinerRTX の初回起動時に、ランダムなパスワードが `node/monacoin.conf` とアプリのソロ採掘設定の両方へ自動で書き込まれます（v2.2.3 以降。全配布物で共通だった旧既定値 `rpcpassword` は使われません）。先にアプリを一度起動してからノードを起動してください。
 
 * **初回同期（Sync）の仕組みと所要時間目安**:
   - 全世界のモナコイン・ブロックチェーン（ヘッダー411万件・生データ約3.1GB〜）のローカル検証を行います。
@@ -333,7 +343,7 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
    - **RPC Host**: `127.0.0.1`（同じPCでノードを動かす場合）
    - **RPC Port**: `9402`
    - **RPC ユーザー名**: `monacoinrpc`
-   - **RPC パスワード**: `rpcpassword`
+   - **RPC パスワード**: 自動設定済み（`node/monacoin.conf` の `rpcpassword=` と同じ値）
 3. **`🔍 ノード接続テスト (RPC Check)`** ボタンを押します。
    - 「✓ 接続成功 [チェーン: MAIN, ブロック高: #3,XXX,XXX, 接続ピア: 8台, IBD中: いいえ]」と表示されれば、本番ソロ採掘の準備は万全です。
 
@@ -361,9 +371,10 @@ MonaMinerRTX は、外部マイナーバイナリ（ccminer等）を別途用意
    server=1
    listen=1
 
-   # 認証情報 (MonaMinerRTXの初期値と一致)
+   # 認証情報 (rpcpassword は推測されにくい独自の値に変更し、同じ値を
+   # MonaMinerRTX のソロマイニング設定「RPC パスワード」に入力してください)
    rpcuser=monacoinrpc
-   rpcpassword=rpcpassword
+   rpcpassword=ここに独自のパスワード
    rpcport=9402
    rpcallowip=127.0.0.1
 
@@ -428,7 +439,7 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 | 対象OS | ファイル名 | 容量 | 最終更新日 | ダウンロードリンク (Direct Download) |
 |:---|:---|:---:|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.2.2)** | `MonaMinerRTX_Portable_v2.2.2.zip` | 約 69.6 MB | 2026年9月30日 | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.2.zip)** |
+| 🪟 **Windows 64bit ポータブル版 (v2.2.3)** | `MonaMinerRTX_Portable_v2.2.3.zip` | 約 69.6 MB | 2026年10月8日 | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.3.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
@@ -486,6 +497,16 @@ python node/test_solo_submit.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### v2.2.3 (2026-10-08) - セキュリティ強化 (Webダッシュボード / ノード RPC) とソロ採掘の修正
+* **🔒 Web ダッシュボードは既定で「このPCのみ」に変更**: これまでは認証なしで LAN 全体 (`0.0.0.0`) に公開され、同じネットワークの誰でも採掘の開始/停止とログ閲覧ができました。既定を `127.0.0.1` に変更し、スマホ・別PCから使う場合だけ「🌐 遠隔監視・通知」タブの **「LAN に公開する」** を有効にする方式にしました。**⚠ これまでスマホから見ていた方は、このチェックを入れ直してください。**
+* **🔒 DNS リバインディング対策**: ダッシュボードは `Host` ヘッダーが IP アドレス・`localhost`・このPCの名前のいずれかである要求だけを受け付けます。
+* **🔒 同梱ノードの RPC パスワードをPCごとにランダム生成**: 全配布物で共通だった `rpcpassword` をやめ、初回起動時にランダムな値を `node/monacoin.conf` とソロ採掘設定に自動設定します。`node/monacoin.conf` はひな形 `node/monacoin.conf.template` から生成されるようになりました。旧バージョンからの設定も自動移行します（既定のパスワードでノードが起動中の場合は、ノード停止後の次回起動時に切り替え）。独自のノード/パスワードを設定している場合は変更しません。
+* `monacoin_cli.bat` / `stop_nodes.bat` / Regtest 環境も `monacoin.conf` のパスワードを使うように変更。
+* **🚀 ワンクリック・ソロ起動を追加**: `ソロ採掘を起動する.bat`（ソース実行は `run_solo.bat` / `--solo` オプション）で、ノード起動・同期待ち・採掘開始を自動化。
+* **ソロ採掘 (CPU / ハイブリッド) で古いテンプレートのスキャン結果を提出していた問題を修正**: ブロック発見やチェーン先端の更新の直後、まだ走っていた CPU スキャンの結果までノードに提出していたため、必ず拒絶されるブロックで「拒絶」カウントが水増しされ、そのたびにテンプレートを取り直していました（主に Regtest で顕在化）。開始時のテンプレートが現行のものでない結果は破棄します。
+* **ノード停止中・同期中のログ連打を抑制**: `getblocktemplate` の同じエラーを約 0.5 秒ごとに出し続けていたのを、初回と以後 30 秒ごとに変更。復旧時には「ノードとの通信が回復しました」を 1 行表示します。
+* 回帰テスト `tests/test_miner_loop.py` を追加（偽ノード + CPU のみで実行可能）。
 
 ### v2.2.2 (2026-09-30) - シミュレーションモードが既定で有効だった問題の修正
 * **⚠ 重要: 「約 30 MH/s しか出ない」の正体はシミュレーションモードでした**: 設定の既定値が `use_simulator: true` だったため、チェックを外さない限り実際の採掘は行われず、ダミーのハッシュレート（GPU 約 30 MH/s 固定 ± 揺らぎ）と固定のブロック高 `#3,124,560` が表示されていました。既定値を OFF に変更。
@@ -699,7 +720,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v2.2.2.zip # 配布用ZIPアーカイブ (約 69.6MB)
+│   └── MonaMinerRTX_Portable_v2.2.3.zip # 配布用ZIPアーカイブ (約 69.6MB)
 ├── tests/                  # 回帰テスト (unittest): カーネル既知解 / ソロ・Stratum / サービス
 ├── node/                   # Monacoin Core 同梱・ソロ用スクリプト・実ノード検証テスト
 └── app/

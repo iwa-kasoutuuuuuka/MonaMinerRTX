@@ -51,3 +51,6 @@ config.json
 node/regtest_data/
 node/mainnet_data/
 
+# Per-installation node config (generated from monacoin.conf.template, holds the RPC password)
+node/monacoin.conf
+

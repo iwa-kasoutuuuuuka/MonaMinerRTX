@@ -14,6 +14,12 @@ echo.
 echo ※ ブロックチェーンの初期同期（約10GB〜）にはネットワーク回線と時間がかかります。
 echo ※ 同期完了後、MonaMinerRTX で完全な独立ソロマイニングが可能になります。
 echo.
+if not exist "%~dp0monacoin.conf" (
+    copy /y "%~dp0monacoin.conf.template" "%~dp0monacoin.conf" > nul
+    echo ※ monacoin.conf を初期状態で作成しました。RPC パスワードは MonaMinerRTX の次回起動時に
+    echo   （ノード停止中に）自動でランダムな値へ置き換えられます。
+    echo.
+)
 echo ノードを起動しています...
 if not exist "%~dp0mainnet_data" mkdir "%~dp0mainnet_data"
 bin\monacoind.exe -conf="%~dp0monacoin.conf" -datadir="%~dp0mainnet_data"

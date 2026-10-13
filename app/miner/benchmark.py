@@ -10,6 +10,7 @@ from ctypes import c_uint
 
 from PySide6.QtCore import QThread, Signal
 
+from app.miner.blake_midstate import HEADER_BUF_BYTES, HEADER_BUF_WORDS, kernel_header_buffer
 from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
 
@@ -51,10 +52,10 @@ def benchmark_gpu(device: dict, seconds: float = 3.0) -> float:
     ctx = OpenCLContext(device["platform_id"], device["id"])
     try:
         kernel, _ = build_search_kernel(ctx, device, _kernel_source())
-        buf_header = ctx.create_buffer(76)
+        buf_header = ctx.create_buffer(HEADER_BUF_BYTES)
         buf_nonce = ctx.create_buffer(64)
         buf_count = ctx.create_buffer(4)
-        ctx.write_buffer(buf_header, (c_uint * 19).from_buffer_copy(_HEADER), 76)
+        ctx.write_buffer(buf_header, (c_uint * HEADER_BUF_WORDS).from_buffer_copy(kernel_header_buffer(_HEADER)), HEADER_BUF_BYTES)
         wg = max(1, min(128, device.get("max_work_group_size", 128)))
         batch = (1 << 20) // wg * wg
 

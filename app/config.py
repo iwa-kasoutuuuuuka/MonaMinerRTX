@@ -85,6 +85,7 @@ class ConfigManager:
             "discord_notify_events": True,
             "web_dashboard_enabled": True,
             "web_dashboard_port": 8888,
+            "web_dashboard_lan": False, # False: this PC only (127.0.0.1); True: reachable from the LAN (no login!)
             "multi_gpu_enabled": False,
             "selected_gpu_indices": [0],
             "benchmark": {},  # last measured hashrates: {"gpu_mhs", "cpu_mhs_per_thread", ...}

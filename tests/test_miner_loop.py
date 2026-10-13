@@ -102,5 +102,95 @@ class TestSoloMineLoop(unittest.TestCase):
         self.assertEqual(len([line for line in logs if "node is down" in line]), 1)
 
 
+class TestSoloConnectWaitsForWarmup(unittest.TestCase):
+    """A node that was just started answers "Loading block index..." (-28) for a while."""
+
+    class WarmingClient:
+        def __init__(self, warm_calls, final):
+            self.warm_calls = warm_calls
+            self.final = final
+            self.calls = 0
+            self.node_warming_up = False
+
+        def test_connection(self):
+            self.calls += 1
+            self.node_warming_up = self.calls <= self.warm_calls
+            if self.node_warming_up:
+                return False, "RPC接続エラー: Loading block index...", {}
+            return self.final
+
+    def _connect(self, client):
+        import app.miner.opencl_miner as om
+        worker = OpenCLMinerWorker("eco", "solo", "cpu", "", "addr", "w", cpu_threads=1, hardware_mgr=FakeHardware())
+        logs = []
+        worker.log_message.connect(lambda text, level: logs.append((text, level)), Qt.DirectConnection)
+        real_client, real_poll = om.RpcSoloClient, om.NODE_WARMUP_POLL_S
+        om.RpcSoloClient = lambda **kwargs: client
+        om.NODE_WARMUP_POLL_S = 0.01
+        try:
+            return worker._connect(), logs
+        finally:
+            om.RpcSoloClient, om.NODE_WARMUP_POLL_S = real_client, real_poll
+
+    def test_waits_until_the_node_finished_starting(self):
+        client = self.WarmingClient(3, (True, "接続成功", {}))
+        ok, logs = self._connect(client)
+        self.assertTrue(ok)
+        self.assertEqual(client.calls, 4)
+        self.assertEqual(len([t for t, _ in logs if "起動処理中" in t]), 1)  # announced once, not per retry
+        self.assertFalse([t for t, level in logs if level == "error"])
+
+    def test_other_errors_still_fail_at_once(self):
+        client = self.WarmingClient(0, (False, "RPC接続エラー: refused", {}))
+        ok, logs = self._connect(client)
+        self.assertFalse(ok)
+        self.assertEqual(client.calls, 1)
+
+    def test_error_after_warmup_fails(self):
+        client = self.WarmingClient(2, (False, "RPC接続エラー: Incorrect password", {}))
+        ok, _ = self._connect(client)
+        self.assertFalse(ok)
+        self.assertEqual(client.calls, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGpuMineLoop(unittest.TestCase):
+    """The GPU launch queue (needs an OpenCL GPU; skipped otherwise): found nonces are submitted,
+    launches of an outdated template are dropped, and the worker stops cleanly."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from app.miner.opencl_backend import OpenCLBackend
+            if not OpenCLBackend.get_all_gpu_devices():
+                raise unittest.SkipTest("no OpenCL GPU")
+        except Exception as e:
+            raise unittest.SkipTest(f"OpenCL unavailable: {e}")
+        QCoreApplication.instance() or QCoreApplication([])
+
+    def _run(self, device_target):
+        node = FakeNode()
+        worker = OpenCLMinerWorker("eco", "solo", device_target, "", "addr", "w",
+                                   cpu_threads=2, hardware_mgr=FakeHardware(), selected_gpu_indices=[0])
+        logs = []
+        worker.log_message.connect(lambda text, level: logs.append((level, text)), Qt.DirectConnection)
+        worker.solo_client = node
+        worker._connect = lambda: True
+        worker.start()
+        time.sleep(4.0)
+        worker.stop()
+        self.assertTrue(worker.wait(5000))
+        self.assertEqual([t for l, t in logs if l == "error"], [])
+        self.assertTrue(any("GPU #" in t for l, t in logs), "no GPU find was reported")
+        self.assertGreater(node.accepted, 0)
+        self.assertEqual(node.stale, 0)
+        self.assertEqual(worker.rejected_shares, 0)
+
+    def test_gpu_only(self):
+        self._run("gpu")
+
+    def test_hybrid(self):
+        self._run("hybrid")

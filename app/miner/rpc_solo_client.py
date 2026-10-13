@@ -13,6 +13,8 @@ import urllib.error
 import hashlib
 from typing import Optional, Tuple, Dict, Any
 
+RPC_IN_WARMUP = -28  # the node answers, but is still starting up
+
 def sha256d(b: bytes) -> bytes:
     """Double SHA-256 hash."""
     return hashlib.sha256(hashlib.sha256(b).digest()).digest()
@@ -172,6 +174,9 @@ class RpcSoloClient:
         self.last_block_template: Optional[SoloBlockTemplate] = None
         # True once the node itself said the reward address is invalid for its network (permanent error)
         self.address_invalid = False
+        # True when the last test_connection() reached a node that is still starting up
+        # (RPC_IN_WARMUP: "Loading block index...", "Verifying blocks..." etc.)
+        self.node_warming_up = False
 
     def call(self, method: str, params: list = None, timeout: float = 10.0) -> Dict[str, Any]:
         """Performs a raw JSON-RPC call."""
@@ -222,8 +227,11 @@ class RpcSoloClient:
         Validates connection to Monacoin Core node and returns status summary.
         """
         res = self.call("getblockchaininfo")
+        self.node_warming_up = False
         if "error" in res and res["error"]:
-            return False, f"RPC接続エラー: {res['error'].get('message', res['error'])}", {}
+            err = res["error"]
+            self.node_warming_up = isinstance(err, dict) and err.get("code") == RPC_IN_WARMUP
+            return False, f"RPC接続エラー: {err.get('message', err) if isinstance(err, dict) else err}", {}
         
         info = res.get("result", {})
         chain = info.get("chain", "unknown")

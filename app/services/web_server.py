@@ -3,7 +3,9 @@ Lightweight embedded Web Monitoring Dashboard & REST API.
 Built using Python's standard http.server.ThreadingHTTPServer.
 Zero third-party web frameworks needed (keeps portable binary tiny).
 """
+import ipaddress
 import json
+import socket
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Callable, Dict, Any, Optional
@@ -50,7 +52,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div class="container">
     <header>
-        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.2.2</span></h1>
+        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.2.3</span></h1>
         <span id="miner-status" class="badge">確認中...</span>
     </header>
 
@@ -153,7 +155,33 @@ class WebServerRequestHandler(BaseHTTPRequestHandler):
         # Suppress noisy standard HTTP access logs
         return
 
+    def _host_allowed(self) -> bool:
+        """
+        Blocks DNS rebinding: a hostile web page can point its own domain name at this machine and
+        then talk to the dashboard as "same origin". Such a request carries that domain in `Host`,
+        so only the names this server is really reached by are accepted: an IP address literal,
+        localhost, or this computer's own name.
+        """
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host.startswith("["):  # [IPv6]:port
+            name = host[1:].split("]", 1)[0]
+        else:
+            name = host.rsplit(":", 1)[0] if ":" in host else host
+        if not name:
+            return False
+        try:
+            ipaddress.ip_address(name)
+            return True
+        except ValueError:
+            pass
+        own = socket.gethostname().lower()
+        return name in ("localhost", own, own + ".local")
+
     def do_GET(self):
+        if not self._host_allowed():
+            self.send_response(403)
+            self.end_headers()
+            return
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -185,7 +213,7 @@ class WebServerRequestHandler(BaseHTTPRequestHandler):
         return origin.split("://", 1)[-1] == host
 
     def do_POST(self):
-        if not self._same_origin():
+        if not self._host_allowed() or not self._same_origin():
             self.send_response(403)
             self.end_headers()
             return
@@ -211,7 +239,11 @@ class WebServerRequestHandler(BaseHTTPRequestHandler):
 
 
 class WebMonitoringServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = 8888):
+    # The dashboard has no login: it listens on this PC only unless the user opts in to LAN access.
+    LOCAL_HOST = "127.0.0.1"
+    LAN_HOST = "0.0.0.0"
+
+    def __init__(self, host: str = LOCAL_HOST, port: int = 8888):
         self.host = host
         self.port = port
         self.server: Optional[HTTPServer] = None

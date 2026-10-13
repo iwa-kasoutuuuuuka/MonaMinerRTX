@@ -21,6 +21,8 @@ from app.services import (
     IdleTracker, ProfitCalculator, DiscordNotifier,
     GpuHardwareController, WebMonitoringServer
 )
+from app.services.node_credentials import DEFAULT_RPC_PASSWORD, ensure_rpc_password
+from app.services.node_service import fetch_node_sync_info
 from app.miner.opencl_backend import OpenCLBackend
 from app.miner.benchmark import BenchmarkWorker
 
@@ -60,17 +62,23 @@ class MainWindow(QMainWindow):
     # when called from a thread that has no Qt event loop).
     remote_toggle = Signal(bool)
 
-    def __init__(self):
+    def __init__(self, solo_autostart: bool = False):
         super().__init__()
+        # One-click solo launch (`--solo`): start the bundled node if needed, wait until it is
+        # synced, then start mining. Cleared once mining was started or the attempt was given up.
+        self._solo_autostart = solo_autostart
+        self._solo_autostart_node_launched = False
+        self._solo_autostart_last_note = None
         self._web_snapshot = {}
         self._last_node_info = {}
         self._node_worker = None
-        self.setWindowTitle("MonaMiner RTX / RX v2.2.2 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
+        self.setWindowTitle("MonaMiner RTX / RX v2.2.3 - 次世代モナコイン (Lyra2REv2) GPU/CPU マイニングスタジオ")
         self.setMinimumSize(920, 640)
         self.resize(1120, 880)
         self.setStyleSheet(MAIN_STYLE)
 
         self.config_mgr = ConfigManager()
+        rpc_password_note = self._sync_node_rpc_password()  # before the UI reads solo_pass
         self.hw_mgr = HardwareManager()
         bench = self.config_mgr.get("benchmark", {}) or {}
         self.hw_mgr.set_measured(bench.get("gpu_mhs"), bench.get("cpu_mhs_per_thread"))
@@ -90,6 +98,7 @@ class MainWindow(QMainWindow):
         self.idle_tracker.set_threshold_minutes(self.config_mgr.get("idle_mining_minutes", 5))
 
         self.web_server = WebMonitoringServer(
+            host=self._web_bind_host(),
             port=self.config_mgr.get("web_dashboard_port", 8888)
         )
 
@@ -104,6 +113,11 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._setup_services()
         self.remote_toggle.connect(self._on_remote_toggle)
+        if rpc_password_note:
+            self.console.append_log(*rpc_password_note)
+        if self._solo_autostart:
+            self.tabs_target.setCurrentIndex(1)  # solo
+            self.console.append_log("🚀 ワンクリック・ソロ起動: ノードの起動と同期を確認でき次第、自動で採掘を開始します。", "info")
 
         # Telemetry refresh timer (every 1 second)
         self.telemetry_timer = QTimer(self)
@@ -118,6 +132,45 @@ class MainWindow(QMainWindow):
         # Initial updates
         self._update_hardware_telemetry()
         self._check_node_sync_async()
+
+    def _sync_node_rpc_password(self):
+        """
+        Gives the bundled node its own random RPC password (instead of the published default) and
+        points the solo mining settings at it. Returns a (text, level) log line, or None.
+        """
+        node_dir = os.path.join(_app_root(), "node")
+        host = self.config_mgr.get("solo_host", "127.0.0.1")
+        port = self.config_mgr.get("solo_port", 9402)
+        user = self.config_mgr.get("solo_user", "monacoinrpc")
+
+        def node_uses_default() -> bool:
+            info = fetch_node_sync_info("127.0.0.1", 9402, "monacoinrpc", DEFAULT_RPC_PASSWORD, timeout=1.5)
+            return info["is_running"] and not info["auth_error"]
+
+        try:
+            password, changed = ensure_rpc_password(node_dir, node_uses_default)
+        except Exception as e:
+            return f"ノードの RPC パスワードを更新できませんでした: {e}", "warn"
+        if password is None:
+            return None
+        if password == DEFAULT_RPC_PASSWORD:
+            return ("🔐 起動中のノードが既定の RPC パスワードを使用しています。ノードを停止してから本アプリを"
+                    "再起動すると、この PC 専用のランダムなパスワードに自動で切り替わります。"), "warn"
+
+        # Only settings that still point at the bundled node with the old default are switched over;
+        # a user's own node / own password is left untouched.
+        uses_bundled_default = (host in ("127.0.0.1", "localhost") and port == 9402 and user == "monacoinrpc"
+                                and self.config_mgr.get("solo_pass", DEFAULT_RPC_PASSWORD) == DEFAULT_RPC_PASSWORD)
+        if uses_bundled_default:
+            self.config_mgr.set("solo_pass", password)
+        if changed:
+            return ("🔐 同梱ノードの RPC パスワードを、この PC 専用のランダムな値に設定しました "
+                    "(node/monacoin.conf とソロ採掘設定に反映済み)。"), "info"
+        return None
+
+    def _web_bind_host(self) -> str:
+        lan = self.config_mgr.get("web_dashboard_lan", False)
+        return WebMonitoringServer.LAN_HOST if lan else WebMonitoringServer.LOCAL_HOST
 
     def _setup_ui(self):
         # 0. Main Scroll Area for small resolutions & high DPI
@@ -156,7 +209,7 @@ class MainWindow(QMainWindow):
 
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title = QLabel("MonaMiner RTX / RX v2.2.2 (Lyra2REv2)")
+        title = QLabel("MonaMiner RTX / RX v2.2.3 (Lyra2REv2)")
         title.setObjectName("title")
 
         hw_info = self.hw_mgr.device_info
@@ -734,13 +787,13 @@ class MainWindow(QMainWindow):
         tab_remote_layout.setHorizontalSpacing(10)
         tab_remote_layout.setVerticalSpacing(12)
 
-        self.chk_web_enable = QCheckBox("スマホ対応 内蔵Webダッシュボードを起動 (LAN内ブラウザ閲覧)")
+        self.chk_web_enable = QCheckBox("内蔵Webダッシュボードを起動 (このPCのブラウザで閲覧)")
         self.chk_web_enable.setStyleSheet("font-size: 13px; font-weight: bold; color: #38bdf8;")
         self.chk_web_enable.setChecked(self.config_mgr.get("web_dashboard_enabled", True))
         self.chk_web_enable.toggled.connect(self._on_web_server_toggled)
-        tab_remote_layout.addWidget(self.chk_web_enable, 0, 0, 1, 2)
+        tab_remote_layout.addWidget(self.chk_web_enable, 0, 0, 1, 4)
 
-        tab_remote_layout.addWidget(QLabel("Webポート:"), 1, 0)
+        tab_remote_layout.addWidget(QLabel("Webポート:"), 2, 0)
         web_port_row = QHBoxLayout()
         self.spin_web_port = QSpinBox()
         self.spin_web_port.setRange(1024, 65535)
@@ -754,23 +807,29 @@ class MainWindow(QMainWindow):
         btn_open_browser.clicked.connect(self._open_web_dashboard)
         web_port_row.addWidget(btn_open_browser)
         web_port_row.addStretch()
-        tab_remote_layout.addLayout(web_port_row, 1, 1, 1, 3)
+        tab_remote_layout.addLayout(web_port_row, 2, 1, 1, 3)
 
-        tab_remote_layout.addWidget(QLabel("Discord Webhook URL:"), 2, 0)
+        self.chk_web_lan = QCheckBox("LAN に公開する (スマホ・別PCから閲覧/操作。ログイン無しのため、信頼できるネットワークでのみ有効に)")
+        self.chk_web_lan.setStyleSheet("color: #fbbf24;")
+        self.chk_web_lan.setChecked(self.config_mgr.get("web_dashboard_lan", False))
+        self.chk_web_lan.toggled.connect(self._on_web_lan_toggled)
+        tab_remote_layout.addWidget(self.chk_web_lan, 1, 0, 1, 4)
+
+        tab_remote_layout.addWidget(QLabel("Discord Webhook URL:"), 3, 0)
         self.edit_discord = QLineEdit(self.config_mgr.get("discord_webhook_url", ""))
         self.edit_discord.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.edit_discord.textChanged.connect(self._on_discord_url_changed)
-        tab_remote_layout.addWidget(self.edit_discord, 2, 1, 1, 2)
+        tab_remote_layout.addWidget(self.edit_discord, 3, 1, 1, 2)
 
         btn_test_discord = QPushButton("🔔 テスト送信")
         btn_test_discord.setStyleSheet("background-color: #4f46e5; color: white; border-radius: 4px; padding: 4px 10px;")
         btn_test_discord.clicked.connect(self._test_discord_notification)
-        tab_remote_layout.addWidget(btn_test_discord, 2, 3)
+        tab_remote_layout.addWidget(btn_test_discord, 3, 3)
 
-        lbl_remote_desc = QLabel("💡 外出先やベッドからスマホで稼働状況・温度・ハッシュレートを確認可能。Discord Webhook を登録すると採掘開始/停止やエラー発生時に自動通知されます。")
+        lbl_remote_desc = QLabel("💡 「LAN に公開する」を有効にすると、同じネットワークのスマホから http://<このPCのIPアドレス>:<ポート> で稼働状況・温度・ハッシュレートを確認できます。Discord Webhook を登録すると採掘開始/停止やエラー発生時に自動通知されます。")
         lbl_remote_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        tab_remote_layout.addWidget(lbl_remote_desc, 3, 0, 1, 4)
-        tab_remote_layout.setRowStretch(4, 1)
+        tab_remote_layout.addWidget(lbl_remote_desc, 4, 0, 1, 4)
+        tab_remote_layout.setRowStretch(5, 1)
 
         self.tabs_settings.addTab(tab_remote, "🌐 遠隔監視・通知")
 
@@ -949,13 +1008,16 @@ class MainWindow(QMainWindow):
     def _start_web_server(self):
         port = self.config_mgr.get("web_dashboard_port", 8888)
         self.web_server.port = port
+        self.web_server.host = self._web_bind_host()
         try:
             self.web_server.start(
                 get_status_fn=self._get_web_status,
                 start_fn=self._remote_start_mining,
                 stop_fn=self._remote_stop_mining
             )
-            self.console.append_log(f"🌐 Web監視ダッシュボード起動完了: http://localhost:{port}", "info")
+            scope = ("LAN に公開中 (ログイン無し)" if self.web_server.host == WebMonitoringServer.LAN_HOST
+                     else "このPCのみ")
+            self.console.append_log(f"🌐 Web監視ダッシュボード起動完了: http://localhost:{port} [{scope}]", "info")
         except Exception as e:
             self.console.append_log(f"Web監視サーバー起動エラー: {e}", "warn")
 
@@ -966,6 +1028,12 @@ class MainWindow(QMainWindow):
         else:
             self.web_server.stop()
             self.console.append_log("Web監視サーバーを停止しました。", "info")
+
+    def _on_web_lan_toggled(self, checked: bool):
+        self.config_mgr.set("web_dashboard_lan", checked)
+        if self.web_server.is_running:  # rebind
+            self.web_server.stop()
+            self._start_web_server()
 
     def _open_web_dashboard(self):
         port = self.config_mgr.get("web_dashboard_port", 8888)
@@ -1031,7 +1099,7 @@ class MainWindow(QMainWindow):
             description="Discord Webhook への接続に成功しました！採掘通知を受信できます。",
             color=0x38BDF8,
             fields=[
-                {"name": "バージョン", "value": "v2.2.2", "inline": True},
+                {"name": "バージョン", "value": "v2.2.3", "inline": True},
                 {"name": "ステータス", "value": "Ready", "inline": True}
             ]
         )
@@ -1338,7 +1406,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_miner_status_changed(self, status: str):
-        self.setWindowTitle(f"MonaMiner RTX / RX v2.2.2 - [{status}]")
+        self.setWindowTitle(f"MonaMiner RTX / RX v2.2.3 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
             self.btn_toggle_mining.setText("🚀 採掘開始 (Start Mining)")
@@ -1505,11 +1573,75 @@ class MainWindow(QMainWindow):
             self.progress_sync.setValue(1000)
             self.progress_sync.setFormat(f"同期 100% (最新 #{blocks:,})")
 
+        if self._solo_autostart:
+            self._solo_autostart_step(info)
+
+    def _solo_autostart_note(self, text: str, level: str = "info"):
+        if text != self._solo_autostart_last_note:  # the node is polled every 3 s: say each thing once
+            self._solo_autostart_last_note = text
+            self.console.append_log(f"🚀 {text}", level)
+
+    def _solo_autostart_step(self, info: dict):
+        """Advances the one-click solo launch with the latest node status."""
+        if self.miner_ctrl.is_mining:
+            self._solo_autostart = False
+            return
+        if not info.get("is_running"):
+            if self._solo_autostart_node_launched:
+                self._solo_autostart_note("ノードの起動を待っています...")
+                return
+            host = self.config_mgr.get("solo_host", "127.0.0.1")
+            port = self.config_mgr.get("solo_port", 9402)
+            bat_path = os.path.join(_app_root(), "node", "start_mainnet_solo.bat")
+            if host not in ("127.0.0.1", "localhost") or port != 9402 or not os.path.exists(bat_path):
+                self._solo_autostart = False
+                self._solo_autostart_note(
+                    f"ノード ({host}:{port}) に接続できません。同梱ノード以外は手動で起動してから「採掘開始」を押してください。", "warn")
+                return
+            try:
+                _launch_bat_in_new_window(bat_path)
+            except Exception as e:
+                self._solo_autostart = False
+                self._solo_autostart_note(f"ノードを起動できませんでした: {e}", "error")
+                return
+            self._solo_autostart_node_launched = True
+            self._solo_autostart_note("本番メインネット ノードを別ウィンドウで起動しました。")
+        elif info.get("auth_error"):
+            self._solo_autostart = False
+            self._solo_autostart_note(
+                "ノードの RPC ユーザー名/パスワードが一致しないため自動開始を中止しました。"
+                "稼働中のノードを停止して、もう一度起動し直してください。", "error")
+        elif info.get("is_loading"):
+            self._solo_autostart_note("ノードの初期化 (ブロックインデックス読み込み) を待っています。ノードのウィンドウは閉じないでください...")
+        elif info.get("ibd"):
+            self._solo_autostart_note("ブロックチェーンの同期完了を待っています (進捗は上の同期バーに表示されます)...")
+        else:
+            self._solo_autostart = False
+            self._solo_autostart_note("ノードの同期を確認しました。ソロ採掘を開始します。", "success")
+            self._toggle_mining()
+
     def _node_rpc_in_use(self, what: str) -> bool:
         """Both bundled launchers bind RPC port 9402; a second node there cannot start."""
         info = self._last_node_info
         if not info.get("is_running") or info.get("port") != 9402:
             return False
+        if info.get("is_loading") and not info.get("auth_error"):
+            # Still starting (block index load etc.): the chain is not known yet, and nothing is wrong.
+            QMessageBox.information(
+                self, f"{what}の起動",
+                "Monacoin Core ノードはすでに起動処理中です (ブロックインデックスの読み込みなど)。\n"
+                "ノードのウィンドウは閉じずに、そのままお待ちください。通常は数十秒で完了し、\n"
+                "上の同期ステータスが「同期完了」または「同期検証中」に変わります。"
+            )
+            return True
+        if info.get("auth_error"):
+            QMessageBox.warning(
+                self, f"{what}の起動",
+                "RPC ポート 9402 ではすでに Monacoin Core ノードが稼働中ですが、RPC パスワードが一致しません。\n"
+                "(以前のパスワードで起動したノードが残っている可能性があります)\n\n"
+                "ノードのウィンドウを閉じて停止してから、もう一度起動してください。"
+            )
+            return True
         chain = str(info.get("chain", "")).upper() or "不明"
         QMessageBox.information(
             self, f"{what}の起動",

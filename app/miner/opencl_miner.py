@@ -13,6 +13,7 @@ from PySide6.QtCore import QThread, Signal
 
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
 from app.miner.benchmark import build_search_kernel
+from app.miner.blake_midstate import HEADER_BUF_BYTES, HEADER_BUF_WORDS, kernel_header_buffer
 from app.miner.cpu_backend import CpuBackend, CpuBackendUnavailable
 from app.miner.stratum_client import StratumClient, StratumJob, target_words
 from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
@@ -20,10 +21,13 @@ from app.miner.rpc_solo_client import RpcSoloClient, SoloBlockTemplate
 NONCE_SPACE = 1 << 32       # a header has 2^32 nonces; after that the work must change
 MAX_FOUND = 16              # capacity of the kernel's found_nonce buffer
 TARGET_DISPATCH_S = 0.10    # adaptive batching aims at ~100 ms per kernel launch
-MAX_BATCH = 4194304
+MAX_BATCH = 1 << 26         # 67M nonces: lets the controller reach 100 ms up to ~670 MH/s per GPU
+                            # (the old 4M cap meant ~15 ms launches on an RTX 5080)
+GPU_QUEUE_DEPTH = 2         # launches queued per GPU: one running, one waiting behind it
 CPU_MIN_CHUNK = 64          # nonces per CPU thread and launch (adapted to ~100 ms)
 CPU_MAX_CHUNK = 1 << 20
 CPU_WATT_PER_THREAD = 5.0   # rough estimate, only used when no power sensor is available
+NODE_WARMUP_POLL_S = 2.0         # solo: how often a node that is still starting up is asked again
 RPC_ERROR_LOG_INTERVAL_S = 30.0  # solo: an unchanged template error is repeated at most this often
 POOL_DEFAULT_HOST = "stratum1.vippool.net"
 POOL_DEFAULT_PORT = 8888
@@ -153,9 +157,11 @@ class OpenCLMinerWorker(QThread):
                 init_batch = max(local_wg * 16, 1 << min(20, max(16, intensity)))
                 item["local_wg"] = local_wg
                 item["batch_size"] = (init_batch // local_wg) * local_wg
-                item["buf_header"] = ctx.create_buffer(19 * 4)
+                item["buf_header"] = ctx.create_buffer(HEADER_BUF_BYTES)   # 76-byte prefix + Blake midstate
                 item["buf_found_nonce"] = ctx.create_buffer(MAX_FOUND * 4)
                 item["buf_found_count"] = ctx.create_buffer(4)
+                item["queued"] = []        # launches enqueued and not yet collected (oldest first)
+                item["t_done"] = 0.0       # when the last collected launch completed
 
             self.log_message.emit("✓ 全GPU JIT コンパイル＆バッファ初期化完了！", "success")
             return True
@@ -174,6 +180,16 @@ class OpenCLMinerWorker(QThread):
             )
             self.log_message.emit(f"Monacoin Core RPC 接続確認中: http://{self.solo_host}:{self.solo_port}...", "info")
             ok, msg, _ = self.solo_client.test_connection()
+            if not ok and self.solo_client.node_warming_up:
+                # The node was just started and is still loading (block index etc.): that takes from
+                # seconds to minutes and is not a failure, so wait for it instead of giving up.
+                self.log_message.emit(f"ノードが起動処理中です ({msg})。完了を待っています...", "warn")
+                while self._running and not ok and self.solo_client.node_warming_up:
+                    self._sleep(NODE_WARMUP_POLL_S)
+                    if self._running:
+                        ok, msg, _ = self.solo_client.test_connection()
+                if not self._running:
+                    return False
             if not ok:
                 self.log_message.emit(f"ノード接続エラー: {msg}", "error")
                 return False
@@ -221,6 +237,13 @@ class OpenCLMinerWorker(QThread):
             self._cpu_pool = None
         for item in self.ctx_list:
             try:
+                item["ctx"].finish()   # queued launches still reference host buffers held in item["queued"]
+                for launch in item["queued"]:
+                    item["ctx"].release_event(launch["event"])   # an event retains the context
+            except Exception:
+                pass
+            item["queued"] = []
+            try:
                 item["ctx"].release()
             except Exception:
                 pass
@@ -240,7 +263,8 @@ class OpenCLMinerWorker(QThread):
         if self.ctx_list:
             first = self.ctx_list[0]
             self.log_message.emit(
-                f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {first['batch_size']:,} / WG: {first['local_wg']} / 適応型ディスパッチ有効)",
+                f"最適化プロファイル: {self.mode.upper()} (初期バッチ: {first['batch_size']:,} / WG: {first['local_wg']} / "
+                f"適応型ディスパッチ有効 / GPU キュー深さ {GPU_QUEUE_DEPTH})",
                 "info"
             )
 
@@ -335,9 +359,14 @@ class OpenCLMinerWorker(QThread):
                 cursor = 0
                 continue
 
-            # ---- 3. launch one kernel per GPU (they run concurrently) ------------
-            pending = []
+            # ---- 3. enqueue one launch per GPU (they run concurrently) ----------
+            # Each GPU keeps GPU_QUEUE_DEPTH launches in its in-order queue: while one runs, the
+            # next already waits behind it, so the GPU never idles on the host (result read-back,
+            # Python, the solo RPC poll, telemetry). Found nonces are read back non-blocking right
+            # after each kernel, and the counter is reset before the next one, all in queue order.
             for item in self.ctx_list:
+                if len(item["queued"]) >= GPU_QUEUE_DEPTH:
+                    continue
                 ctx = item["ctx"]
                 kernel = item["kernel"]
                 wg = item["local_wg"]
@@ -348,11 +377,15 @@ class OpenCLMinerWorker(QThread):
                     cursor = NONCE_SPACE
                     break
 
+                # host memory of the non-blocking transfers lives in `launch` until it is collected
+                launch = {"batch": batch, "work": work, "t_enqueue": 0.0,
+                          "count": (c_uint * 1)(0), "nonces": (c_uint * MAX_FOUND)(), "zero": (c_uint * 1)(0)}
                 if item["last_key"] != work_key:
-                    ctx.write_buffer(item["buf_header"], (c_uint * 19).from_buffer_copy(header_76), 19 * 4)
+                    launch["header"] = (c_uint * HEADER_BUF_WORDS).from_buffer_copy(kernel_header_buffer(header_76))
+                    ctx.write_buffer(item["buf_header"], launch["header"], HEADER_BUF_BYTES, blocking=False)
                     item["last_key"] = work_key
 
-                ctx.write_buffer(item["buf_found_count"], (c_uint * 1)(0), 4)
+                ctx.write_buffer(item["buf_found_count"], launch["zero"], 4, blocking=False)
                 ctx.set_arg_mem(kernel, 0, item["buf_header"])
                 ctx.set_arg_uint(kernel, 1, cursor)
                 ctx.set_arg_uint(kernel, 2, t_hi)
@@ -360,9 +393,12 @@ class OpenCLMinerWorker(QThread):
                 ctx.set_arg_mem(kernel, 4, item["buf_found_nonce"])
                 ctx.set_arg_mem(kernel, 5, item["buf_found_count"])
 
-                t_launch = time.perf_counter()
+                launch["t_enqueue"] = time.perf_counter()
                 ctx.run_kernel_1d(kernel, batch, wg)
-                pending.append((item, batch, t_launch))
+                ctx.read_buffer(item["buf_found_count"], launch["count"], 4, blocking=False)
+                launch["event"] = ctx.read_buffer(item["buf_found_nonce"], launch["nonces"], MAX_FOUND * 4,
+                                                  blocking=False, with_event=True)
+                item["queued"].append(launch)
                 cursor += batch
 
             # CPU threads scan their own slices in the background. The loop never waits for them: a CPU
@@ -377,21 +413,32 @@ class OpenCLMinerWorker(QThread):
                         self._cpu_scan, header_76, cursor, chunk, t_hi, t_lo), work))
                     cursor += chunk
 
-            # ---- 4. collect results ---------------------------------------------
-            for item, batch, t_launch in pending:
+            # ---- 4. collect the oldest launch of every GPU ----------------------
+            gpu_paced = False
+            for item in self.ctx_list:
+                if not item["queued"]:
+                    continue
+                if len(item["queued"]) < GPU_QUEUE_DEPTH and cursor < NONCE_SPACE:
+                    continue   # queue not full yet: enqueue again first, then wait
+                launch = item["queued"].pop(0)
                 ctx = item["ctx"]
-                ctx.finish()
-                elapsed = time.perf_counter() - t_launch
+                ctx.wait_event(launch["event"])
+                gpu_paced = True
+                t_done = time.perf_counter()
+                # kernel time: from when the GPU could start it (its enqueue, or the end of the
+                # launch before it), not from an enqueue made while another launch was running
+                elapsed = t_done - max(launch["t_enqueue"], item["t_done"])
+                item["t_done"] = t_done
 
-                c_count = (c_uint * 1)(0)
-                ctx.read_buffer(item["buf_found_count"], c_count, 4)
-                if c_count[0] > 0:
-                    c_nonces = (c_uint * MAX_FOUND)()
-                    ctx.read_buffer(item["buf_found_nonce"], c_nonces, MAX_FOUND * 4)
-                    nonces = [int(c_nonces[i]) for i in range(min(c_count[0], MAX_FOUND))]
-                    self._handle_found(f"GPU #{item['dev']['global_index']}", nonces, work)
+                count = launch["count"][0]
+                if count > 0:
+                    nonces = [int(launch["nonces"][i]) for i in range(min(count, MAX_FOUND))]
+                    # Solo: a launch enqueued for an older template (the tip moved, or a block was
+                    # just found) can only produce a block the node refuses, so it is dropped.
+                    if not (solo and launch["work"]["tpl"] is not self.current_template):
+                        self._handle_found(f"GPU #{item['dev']['global_index']}", nonces, launch["work"])
 
-                total_hashes_window += batch
+                total_hashes_window += launch["batch"]
 
                 # Adaptive batch tuning: ~100 ms per launch keeps stale shares low
                 if elapsed > 0.001:
@@ -401,11 +448,8 @@ class OpenCLMinerWorker(QThread):
                     new_batch = max(wg * 16, min(MAX_BATCH, new_batch))
                     item["batch_size"] = (new_batch // wg) * wg
 
-                if solo and self.current_template is None:
-                    break  # a block was found: drop the remaining results, fetch a new template
-
             if cpu_inflight:
-                if not pending:
+                if not gpu_paced:
                     # CPU-only: nothing else paces the loop, so sleep until a chunk finishes
                     wait([f for _, f, _ in cpu_inflight], timeout=0.05, return_when=FIRST_COMPLETED)
                 still_running = []

@@ -18,6 +18,7 @@ from ctypes import c_uint
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.miner.opencl_backend import OpenCLBackend, OpenCLContext
+from app.miner.blake_midstate import HEADER_BUF_BYTES, HEADER_BUF_WORDS, kernel_header_buffer
 
 KERNEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "app", "miner", "kernels", "lyra2v2.cl")
@@ -152,10 +153,10 @@ class TestSearchKernel(KernelTestBase):
         ctx = self.ctx
         count = -(-count // self.size_multiple) * self.size_multiple
         k = ctx.get_kernel(self.kernel_name)
-        bh = ctx.create_buffer(76)
+        bh = ctx.create_buffer(HEADER_BUF_BYTES)
         bn = ctx.create_buffer(64)
         bc = ctx.create_buffer(4)
-        ctx.write_buffer(bh, (c_uint * 19).from_buffer_copy(header76), 76)
+        ctx.write_buffer(bh, (c_uint * HEADER_BUF_WORDS).from_buffer_copy(kernel_header_buffer(header76)), HEADER_BUF_BYTES)
         ctx.write_buffer(bc, (c_uint * 1)(0), 4)
         ctx.set_arg_mem(k, 0, bh)
         ctx.set_arg_uint(k, 1, base)

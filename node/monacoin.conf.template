@@ -7,7 +7,10 @@ server=1
 listen=1
 daemon=0
 
-# RPC Credentials (Default credentials matching MonaMinerRTX)
+# RPC Credentials
+# "rpcpassword" below is only a placeholder. MonaMinerRTX copies this template to monacoin.conf
+# on its first launch and replaces the placeholder with a random password of its own
+# (v2.2.3+), and uses that password for solo mining. Do not put a real password in the template.
 rpcuser=monacoinrpc
 rpcpassword=rpcpassword
 

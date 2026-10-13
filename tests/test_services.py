@@ -95,6 +95,38 @@ class TestWebServerSecurity(unittest.TestCase):
         self.assertIsNone(resp.getheader("Access-Control-Allow-Origin"))
         conn.close()
 
+    def _get_status_code(self, host_header):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("GET", "/api/status", skip_host=True)
+        conn.putheader("Host", host_header)
+        conn.endheaders()
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status
+
+    def test_dns_rebinding_host_is_rejected(self):
+        # A rebinding page reaches the server under its own domain name, with a matching Origin.
+        evil = f"evil.example:{self.port}"
+        self.assertEqual(self._get_status_code(evil), 403)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("POST", "/api/start", skip_host=True)
+        conn.putheader("Host", evil)
+        conn.putheader("Origin", f"http://{evil}")
+        conn.putheader("Content-Length", "0")
+        conn.endheaders()
+        self.assertEqual(conn.getresponse().status, 403)
+        conn.close()
+        self.assertEqual(self.calls, [])
+
+    def test_ip_localhost_and_own_name_hosts_are_accepted(self):
+        for host in (f"127.0.0.1:{self.port}", f"192.168.1.20:{self.port}", f"localhost:{self.port}",
+                     f"[::1]:{self.port}", f"{socket.gethostname()}:{self.port}"):
+            self.assertEqual(self._get_status_code(host), 200, host)
+
+    def test_listens_on_this_pc_only_by_default(self):
+        self.assertEqual(WebMonitoringServer().host, "127.0.0.1")
+
 
 class _FakeRpcHandler(http.server.BaseHTTPRequestHandler):
     """Answers like Monacoin Core: 401 without the right Basic auth, JSON otherwise."""

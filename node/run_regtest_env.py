@@ -10,10 +10,30 @@ import sys
 import time
 import json
 import base64
+import shutil
 import signal
 import subprocess
 import urllib.request
 import urllib.error
+
+NODE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def load_rpc_password() -> str:
+    """
+    The regtest nodes use the RPC password of node/monacoin.conf (random per installation, written by
+    MonaMinerRTX on its first launch), so the GUI reaches them with the same solo mining settings.
+    """
+    conf = os.path.join(NODE_DIR, "monacoin.conf")
+    if not os.path.exists(conf):
+        shutil.copyfile(os.path.join(NODE_DIR, "monacoin.conf.template"), conf)
+    with open(conf, "r", encoding="utf-8") as f:
+        for line in f:
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "rpcpassword":
+                return value.strip()
+    return "rpcpassword"
+
+RPC_PASSWORD = load_rpc_password()
 
 def rpc(port: int, method: str, params: list = None, timeout: float = 5.0, wallet: str = None):
     if params is None:
@@ -24,7 +44,7 @@ def rpc(port: int, method: str, params: list = None, timeout: float = 5.0, walle
         "method": method,
         "params": params
     }).encode("utf-8")
-    auth = base64.b64encode(b"monacoinrpc:rpcpassword").decode("ascii")
+    auth = base64.b64encode(f"monacoinrpc:{RPC_PASSWORD}".encode("utf-8")).decode("ascii")
     # With more than one wallet loaded, wallet RPCs must address a wallet explicitly.
     path = f"wallet/{wallet}" if wallet else ""
     req = urllib.request.Request(
@@ -62,7 +82,7 @@ def main():
         "-regtest",
         "-server=1",
         "-rpcuser=monacoinrpc",
-        "-rpcpassword=rpcpassword",
+        f"-rpcpassword={RPC_PASSWORD}",
         "-rpcport=9402",
         "-port=20444",
         "-fallbackfee=0.0001",
@@ -77,7 +97,7 @@ def main():
         "-regtest",
         "-server=1",
         "-rpcuser=monacoinrpc",
-        "-rpcpassword=rpcpassword",
+        f"-rpcpassword={RPC_PASSWORD}",
         "-rpcport=9403",
         "-port=20445",
         "-addnode=127.0.0.1:20444",

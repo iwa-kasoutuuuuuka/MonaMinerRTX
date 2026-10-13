@@ -171,6 +171,12 @@ class OpenCLBackend:
         lib.clReleaseMemObject.argtypes = [c_void_p]
         lib.clReleaseMemObject.restype = c_int
 
+        # clWaitForEvents / clReleaseEvent
+        lib.clWaitForEvents.argtypes = [c_uint, POINTER(c_void_p)]
+        lib.clWaitForEvents.restype = c_int
+        lib.clReleaseEvent.argtypes = [c_void_p]
+        lib.clReleaseEvent.restype = c_int
+
         return lib
 
     @classmethod
@@ -368,29 +374,51 @@ class OpenCLContext:
         if err != CL_SUCCESS:
             raise OpenCLException(err, f"clSetKernelArg({arg_index}) raw failed")
 
-    def write_buffer(self, cl_buf, host_ptr, size_bytes: int, blocking: bool = True):
+    # The queue is in-order: commands run in the sequence they were enqueued. A non-blocking
+    # write/read returns at once; its host memory must stay alive until the command completed
+    # (wait on the event of it or of any later command, or call finish()).
+    def write_buffer(self, cl_buf, host_ptr, size_bytes: int, blocking: bool = True, with_event: bool = False):
+        ev = c_void_p(None)
         err = self.lib.clEnqueueWriteBuffer(
-            self.queue, cl_buf, 1 if blocking else 0, 0, size_bytes, host_ptr, 0, None, None
+            self.queue, cl_buf, 1 if blocking else 0, 0, size_bytes, host_ptr, 0, None,
+            byref(ev) if with_event else None
         )
         if err != CL_SUCCESS:
             raise OpenCLException(err, "clEnqueueWriteBuffer failed")
+        return ev.value if with_event else None
 
-    def read_buffer(self, cl_buf, host_ptr, size_bytes: int, blocking: bool = True):
+    def read_buffer(self, cl_buf, host_ptr, size_bytes: int, blocking: bool = True, with_event: bool = False):
+        ev = c_void_p(None)
         err = self.lib.clEnqueueReadBuffer(
-            self.queue, cl_buf, 1 if blocking else 0, 0, size_bytes, host_ptr, 0, None, None
+            self.queue, cl_buf, 1 if blocking else 0, 0, size_bytes, host_ptr, 0, None,
+            byref(ev) if with_event else None
         )
         if err != CL_SUCCESS:
             raise OpenCLException(err, "clEnqueueReadBuffer failed")
+        return ev.value if with_event else None
 
-    def run_kernel_1d(self, kernel, global_size: int, local_size: int = None):
+    def run_kernel_1d(self, kernel, global_size: int, local_size: int = None, with_event: bool = False):
         c_global = (c_size_t * 1)(global_size)
         c_local = (c_size_t * 1)(local_size) if local_size else None
+        ev = c_void_p(None)
 
         err = self.lib.clEnqueueNDRangeKernel(
-            self.queue, kernel, 1, None, c_global, c_local, 0, None, None
+            self.queue, kernel, 1, None, c_global, c_local, 0, None, byref(ev) if with_event else None
         )
         if err != CL_SUCCESS:
             raise OpenCLException(err, "clEnqueueNDRangeKernel failed")
+        return ev.value if with_event else None
+
+    def wait_event(self, event):
+        """Blocks until the command that produced `event` has completed, then releases the event."""
+        evs = (c_void_p * 1)(event)
+        err = self.lib.clWaitForEvents(1, evs)
+        self.lib.clReleaseEvent(event)
+        if err != CL_SUCCESS:
+            raise OpenCLException(err, "clWaitForEvents failed")
+
+    def release_event(self, event):
+        self.lib.clReleaseEvent(event)
 
     def finish(self):
         self.lib.clFinish(self.queue)

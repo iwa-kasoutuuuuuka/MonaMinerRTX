@@ -48,7 +48,8 @@ def main():
         from PySide6.QtGui import QIcon
         app.setWindowIcon(QIcon(icon_path))
 
-    window = MainWindow()
+    # --solo: one-click solo mining (starts the bundled node, waits for sync, starts mining)
+    window = MainWindow(solo_autostart="--solo" in sys.argv[1:])
     if os.path.exists(icon_path):
         from PySide6.QtGui import QIcon
         window.setWindowIcon(QIcon(icon_path))

@@ -7,12 +7,12 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v2.2.2.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v2.2.3.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
 
 def build():
     print("=" * 60)
-    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.2.2")
+    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.2.3")
     print("=" * 60)
 
     # 1. Clean previous build
@@ -75,7 +75,7 @@ def build():
 
     # 3. Copy documentation, helpers, and OpenCL kernels
     print("\n[3/5] 配布用ドキュメント、アセット、カーネルおよび起動バッチを同梱中...")
-    files_to_copy = ["README.md", "GEMINI.md", "diagnose.py", "run.bat"]
+    files_to_copy = ["README.md", "GEMINI.md", "diagnose.py", "run.bat", "run_solo.bat"]
     for fname in files_to_copy:
         src = os.path.join(PROJECT_DIR, fname)
         if os.path.exists(src):
@@ -117,6 +117,10 @@ def build():
         for item in os.listdir(src_node):
             s_item = os.path.join(src_node, item)
             d_item = os.path.join(dst_node, item)
+            if item == "monacoin.conf":
+                # This machine's generated config (own RPC password): every installation creates
+                # its own from monacoin.conf.template on first launch.
+                continue
             if os.path.isfile(s_item):
                 shutil.copy2(s_item, d_item)
             elif os.path.isdir(s_item) and item == "bin":
@@ -131,6 +135,15 @@ def build():
         f.write("cd /d \"%~dp0\"\r\n")
         f.write("start \"\" \"MonaMinerRTX.exe\"\r\n")
     print("  - 作成: 起動する.bat")
+
+    # One-click solo mining: node + sync wait + mining start
+    portable_solo_bat = os.path.join(OUTPUT_FOLDER, "ソロ採掘を起動する.bat")
+    with open(portable_solo_bat, "w", encoding="utf-8") as f:
+        f.write("@echo off\r\n")
+        f.write("chcp 65001 > nul\r\n")
+        f.write("cd /d \"%~dp0\"\r\n")
+        f.write("start \"\" \"MonaMinerRTX.exe\" --solo\r\n")
+    print("  - 作成: ソロ採掘を起動する.bat")
 
     # 4. Verification Test
     print("\n[4/5] 生成された実行ファイル (MonaMinerRTX.exe) のテスト検証...")
