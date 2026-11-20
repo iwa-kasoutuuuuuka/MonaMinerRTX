@@ -52,7 +52,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div class="container">
     <header>
-        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.2.3</span></h1>
+        <h1>⚡ MonaMinerRTX <span style="font-size: 0.9rem; color: #8b949e;">v2.2.4</span></h1>
         <span id="miner-status" class="badge">確認中...</span>
     </header>
 

@@ -1,3 +1,4 @@
+import glob
 import os
 import sys
 import shutil
@@ -7,12 +8,28 @@ import subprocess
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist")
 OUTPUT_FOLDER = os.path.join(DIST_DIR, "MonaMinerRTX")
-ZIP_NAME = "MonaMinerRTX_Portable_v2.2.3.zip"
+ZIP_NAME = "MonaMinerRTX_Portable_v2.2.4.zip"
 ZIP_PATH = os.path.join(DIST_DIR, ZIP_NAME)
+
+NODE_BIN_EXCLUDE = ("monacoin-tx.exe", "monacoin-wallet.exe")
+
+# Relative to dist/MonaMinerRTX/_internal. The app uses QtCore / QtGui / QtWidgets only and does its
+# networking with urllib / sockets, so QML, Quick, PDF, OpenGL, Qt Network and their plugins are dead weight.
+PRUNE_PATTERNS = (
+    "PySide6/opengl32sw.dll",            # software OpenGL fallback (20 MB), only for Qt Quick / OpenGL widgets
+    "PySide6/Qt6Quick*.dll", "PySide6/Qt6Qml*.dll", "PySide6/Qt6Pdf*.dll", "PySide6/Qt6OpenGL*.dll",
+    "PySide6/Qt6VirtualKeyboard*.dll", "PySide6/Qt6Network.dll", "PySide6/QtNetwork.pyd",
+    "PySide6/translations",
+    "PySide6/plugins/tls", "PySide6/plugins/networkinformation", "PySide6/plugins/platforminputcontexts",
+    "PySide6/plugins/generic", "PySide6/plugins/imageformats/qpdf.dll",
+    "PySide6/plugins/platforms/qdirect2d.dll", "PySide6/plugins/platforms/qminimal.dll",
+    "PySide6/plugins/platforms/qoffscreen.dll",
+    "libcrypto-3-x64.dll", "libssl-3-x64.dll",   # OpenSSL 3 for Qt's TLS plugin; Python's ssl uses 1.1
+)
 
 def build():
     print("=" * 60)
-    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.2.3")
+    print("  MonaMiner RTX 配布用ポータブル版ビルドスクリプト v2.2.4")
     print("=" * 60)
 
     # 1. Clean previous build
@@ -124,7 +141,9 @@ def build():
             if os.path.isfile(s_item):
                 shutil.copy2(s_item, d_item)
             elif os.path.isdir(s_item) and item == "bin":
-                shutil.copytree(s_item, d_item)
+                # Only what the bundled scripts start. monacoin-tx / monacoin-wallet are offline
+                # command-line utilities nothing here calls (3.4 MB of the ZIP).
+                shutil.copytree(s_item, d_item, ignore=shutil.ignore_patterns(*NODE_BIN_EXCLUDE))
         print("  - コピー: node/ (Monacoin Core バイナリ、設定、ソロ起動スクリプト群)")
 
     # Portable run.bat
@@ -145,6 +164,20 @@ def build():
         f.write("start \"\" \"MonaMinerRTX.exe\" --solo\r\n")
     print("  - 作成: ソロ採掘を起動する.bat")
 
+    # Drop Qt parts a QtWidgets-only application never loads (PyInstaller's PySide6 hook collects
+    # them as plugin dependencies). Keeps the ZIP under GitHub's 50 MB recommendation.
+    internal = os.path.join(OUTPUT_FOLDER, "_internal")
+    freed = 0
+    for pattern in PRUNE_PATTERNS:
+        for path in glob.glob(os.path.join(internal, pattern)):
+            if os.path.isdir(path):
+                freed += sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs)
+                shutil.rmtree(path)
+            else:
+                freed += os.path.getsize(path)
+                os.remove(path)
+    print(f"  - 未使用の Qt モジュールを削除: {freed / (1024 * 1024):.1f} MB")
+
     # 4. Verification Test
     print("\n[4/5] 生成された実行ファイル (MonaMinerRTX.exe) のテスト検証...")
     exe_path = os.path.join(OUTPUT_FOLDER, "MonaMinerRTX.exe")
@@ -157,7 +190,7 @@ def build():
 
     # 5. Create Zip Archive
     print("\n[5/5] 配布用 ZIP アーカイブを作成中...")
-    with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
         for root, dirs, files in os.walk(OUTPUT_FOLDER):
             for file in files:
                 abs_file = os.path.join(root, file)

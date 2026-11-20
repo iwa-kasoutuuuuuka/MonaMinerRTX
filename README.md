@@ -5,8 +5,8 @@
 # MonaMiner RTX / RX
 ### ⚡ モナコイン (Lyra2REv2) ハイブリッド GUI マイニングスタジオ
 
-[![Release](https://img.shields.io/badge/Release-v2.2.3_(2026--10--08更新)-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
-[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.3.zip_(2026--10--08更新)-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.3.zip)
+[![Release](https://img.shields.io/badge/Release-v2.2.4_(2026--11--21更新)-blue.svg)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/releases)
+[![Direct Download](https://img.shields.io/badge/📥_直リンク_ダウンロード-MonaMinerRTX__Portable__v2.2.4.zip_(2026--11--21更新)-brightgreen?style=for-the-badge&logo=windows)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.4.zip)
 [![Python](https://img.shields.io/badge/Python-3.9+-yellow.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 🌟 主な特徴 (v2.2.3)
+## 🌟 主な特徴 (v2.2.4)
 
 1. **🏠 2階層ナビゲーションGUI (かんたん採掘 ＆ 詳細設定・高度なツール)**:
    - 認知的過負荷を解消し、普段使いに必要な「受取アドレス入力」「デバイス・モード選択」「採掘開始」を1画面に集約。
@@ -95,7 +95,7 @@ v2.1.0 では、機能追加による煩雑さを解消するため、画面構�
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [MonaMiner RTX / RX v2.2.3] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
+│ [MonaMiner RTX / RX v2.2.4] [⚡ NVIDIA RTX 5080 | 🧠 CPU (32T)] [管理者権限]│ ◄ 常時固定ヘッダー
 ├────────────────────────────────────────────────────────────────────────┤
 │ [ハッシュレート] [消費電力] [推定電気代(1日)] [電力効率] [温度/ファン] [承認シェア]│ ◄ 常時固定テレメトリー
 ├────────────────────────────────────────────────────────────────────────┤
@@ -439,7 +439,7 @@ Python や各種ライブラリのインストールが**一切不要**な単体
 
 | 対象OS | ファイル名 | 容量 | 最終更新日 | ダウンロードリンク (Direct Download) |
 |:---|:---|:---:|:---:|:---:|
-| 🪟 **Windows 64bit ポータブル版 (v2.2.3)** | `MonaMinerRTX_Portable_v2.2.3.zip` | 約 69.6 MB | 2026年10月8日 | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.3.zip)** |
+| 🪟 **Windows 64bit ポータブル版 (v2.2.4)** | `MonaMinerRTX_Portable_v2.2.4.zip` | 約 45.3 MB | 2026年11月21日 | **[📥 今すぐダウンロード (直リンク)](https://github.com/iwa-kasoutuuuuuka/MonaMinerRTX/raw/main/dist/MonaMinerRTX_Portable_v2.2.4.zip)** |
 
 > [!TIP]
 > **ワンクリックで即座にダウンロードできます**:
@@ -498,9 +498,7 @@ python node/test_solo_submit.py
 
 ## 📋 更新履歴 (Changelog)
 
-### ソース版の更新 (2026-11-21) - 安定性の修正と高速化
-> ⚠ この項目の内容は **ソース実行 (`python main.py` / `run_solo.bat`) にのみ反映** されています。配布中のポータブル版 ZIP (v2.2.3, 2026-10-08) にはまだ含まれていません。
-
+### v2.2.4 (2026-11-21) - 安定性の修正・高速化・配布サイズ削減
 * **数日おきに GUI が突然終了する問題を修正**: 実行中の QThread が破棄されて Qt がプロセスごと強制終了していました（`QThread: Destroyed while thread is still running`）。起動したスレッドを、本当に終了するまで必ず保持する仕組み（`app/thread_keeper.py`）に統一しました。
 * **クラッシュ記録 `logs/fatal.log` を追加**: Qt の致命的エラーとネイティブ例外を、全スレッドのスタック付きで記録します。
 * **高速化 (RTX 5080 実測 約 280 → 約 293 MH/s)**: Blake256 ミッドステート事前計算、Keccak ラウンドの展開、バッチ上限の拡大、GPU ごとに 2 段の投入キュー（GPU を待たせずに次のバッチを積む）。
@@ -513,6 +511,7 @@ python node/test_solo_submit.py
 * **ファン制御**: 手動速度をカードの全ファンに適用（従来は 1 基目のみ）。「0 = 自動」で実際に自動制御へ戻り、アプリ終了時にも自動制御へ戻します。
 * **外部マイナー (ccminer 等)**: kH/s・GH/s 表示を MH/s に正しく換算。起動直後に停止してもマイナーが残らないように修正。パスワードをログに表示しません。
 * そのほか: ベンチマークの片方が失敗しても保存済みの実測値を消さない / ノード停止中・プール再接続中はハッシュレートを 0 表示 / シミュレーションモードでは実 GPU の電力制限を変更しない / CPU 用 OpenCL ランタイムを GPU 一覧に出さない / ハイブリッドで GPU 初期化に失敗したときのクラッシュを修正。
+* **ポータブル版 ZIP を 69.6 MB → 約 45 MB に削減**: このアプリが使わない Qt の部品（ソフトウェア OpenGL、QML / Quick、PDF、Qt Network、翻訳ファイルなど）と、同梱スクリプトから呼ばれないノード付属ツール（`monacoin-tx.exe` / `monacoin-wallet.exe`）を同梱対象から除外しました。`monacoind.exe` / `monacoin-cli.exe` / `monacoin-qt.exe` は引き続き同梱しています。
 * 回帰テストを追加: `tests/test_thread_keeper.py`、`tests/test_external_miner_and_config.py` ほか。
 
 ### v2.2.3 (2026-10-08) - セキュリティ強化 (Webダッシュボード / ノード RPC) とソロ採掘の修正
@@ -737,7 +736,7 @@ mona-miner-gui/
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
 │   ├── MonaMinerRTX/       # 解凍済みポータブル実行環境 (MonaMinerRTX.exe 同梱)
-│   └── MonaMinerRTX_Portable_v2.2.3.zip # 配布用ZIPアーカイブ (約 69.6MB)
+│   └── MonaMinerRTX_Portable_v2.2.4.zip # 配布用ZIPアーカイブ (約 45MB)
 ├── tests/                  # 回帰テスト (unittest): カーネル既知解 / ソロ・Stratum / サービス
 ├── node/                   # Monacoin Core 同梱・ソロ用スクリプト・実ノード検証テスト
 └── app/
