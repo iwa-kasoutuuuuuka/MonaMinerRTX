@@ -18,6 +18,7 @@ CL_DEVICE_TYPE_GPU = (1 << 2)
 CL_DEVICE_TYPE_ACCELERATOR = (1 << 3)
 CL_DEVICE_TYPE_CUSTOM = (1 << 4)
 CL_DEVICE_TYPE_ALL = 0xFFFFFFFF
+CL_DEVICE_TYPE = 0x1000          # clGetDeviceInfo parameter (cl_device_type is a 64-bit bitfield)
 
 # cl_platform_info
 CL_PLATFORM_PROFILE = 0x0900
@@ -219,6 +220,12 @@ class OpenCLBackend:
 
         res = []
         for d in devices:
+            if device_type == CL_DEVICE_TYPE_ALL:
+                # Fallback listing: a CPU OpenCL runtime (Intel / PoCL) must not show up as a "GPU".
+                dev_type = c_ulonglong(0)
+                if lib.clGetDeviceInfo(d, CL_DEVICE_TYPE, sizeof(dev_type), byref(dev_type), None) == CL_SUCCESS \
+                        and dev_type.value & CL_DEVICE_TYPE_CPU:
+                    continue
             buf = create_string_buffer(512)
             lib.clGetDeviceInfo(d, CL_DEVICE_NAME, 512, buf, None)
             dev_name = buf.value.decode("utf-8", errors="ignore").strip()

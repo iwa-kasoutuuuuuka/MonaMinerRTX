@@ -227,8 +227,12 @@ class ProcessWorker(QThread):
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
+            if not self._running:      # stop() ran before the process existed: it could not kill it
+                self._kill_process()
 
-            re_hashrate = re.compile(r"(\d+(?:\.\d+)?)\s*(?:MH|kH|GH)/s", re.IGNORECASE)
+            # ccminer prints H/s, kH/s, MH/s or GH/s depending on the speed; the UI works in MH/s.
+            re_hashrate = re.compile(r"(\d+(?:\.\d+)?)\s*([kMG]?)H/s", re.IGNORECASE)
+            unit_to_mhs = {"": 1e-6, "k": 1e-3, "m": 1.0, "g": 1e3}
             re_accepted = re.compile(r"accepted:\s*(\d+)/(\d+)", re.IGNORECASE)
 
             for line in iter(self.process.stdout.readline, ''):
@@ -257,12 +261,14 @@ class ProcessWorker(QThread):
 
                 m_hr = re_hashrate.search(line)
                 if m_hr:
-                    hr = float(m_hr.group(1))
+                    hr = float(m_hr.group(1)) * unit_to_mhs[m_hr.group(2).lower()]
                     metrics = self.hardware_mgr.get_live_metrics()
                     pwr = metrics["power_w"] if metrics["power_w"] > 0 else 250.0
                     eff = hr / pwr if pwr > 0 else 0.0
                     self.hashrate_update.emit(hr, pwr, eff)
 
+            if not self._running:
+                self._kill_process()   # left the loop on a stop request: never wait on a live miner
             self.process.stdout.close()
             return_code = self.process.wait()
             self.process_exited.emit(return_code)
@@ -271,24 +277,30 @@ class ProcessWorker(QThread):
             self.log_message.emit(f"マイナー起動エラー: {e}", "error")
             self.process_exited.emit(-1)
 
+    def _kill_process(self):
+        process = self.process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.call(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
     def stop(self):
         self._running = False
-        if self.process:
-            try:
-                if sys.platform == "win32":
-                    subprocess.call(
-                        ["taskkill", "/F", "/T", "/PID", str(self.process.pid)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-                else:
-                    self.process.terminate()
-                self.process.wait(timeout=2)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
+        self._kill_process()
         self.wait(2000)
 
 class MinerController(QObject):
@@ -334,7 +346,8 @@ class MinerController(QObject):
         intensity = mode_data["intensity"]
 
         # Apply GPU power limit if GPU mining is enabled
-        if device_target in ["gpu", "hybrid"]:
+        # Not in simulation mode: a UI test must not change the real card's power limit.
+        if device_target in ["gpu", "hybrid"] and not use_sim:
             ok, msg = self.hardware_mgr.apply_power_limit(target_pwr)
             self.log_received.emit(f"[ハードウェア制御] {msg}", "info" if ok else "warn")
 

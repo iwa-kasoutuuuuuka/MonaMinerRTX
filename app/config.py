@@ -93,6 +93,7 @@ class ConfigManager:
             "target_fan_percent": 0,
             "config_version": CONFIG_VERSION
         }
+        self.load_error = None   # set when an existing config could not be read (defaults in use)
         self.load()
 
     def load(self):
@@ -100,7 +101,9 @@ class ConfigManager:
             try:
                 with open(self.filepath, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
-                    self.data.update(loaded)
+                if not isinstance(loaded, dict):
+                    raise ValueError("config root is not an object")
+                self.data.update(loaded)
                 if loaded.get("config_version", 1) < 2:
                     # Configs written before v2.2.2 stored the old default use_simulator=True,
                     # which made users run the fake simulator without noticing.
@@ -108,6 +111,12 @@ class ConfigManager:
                 self.data["config_version"] = CONFIG_VERSION
             except Exception as e:
                 print(f"[Config] Error loading config: {e}")
+                self.load_error = str(e)
+                # The next set() rewrites the file from defaults: keep the unreadable one for recovery.
+                try:
+                    os.replace(self.filepath, self.filepath + ".corrupt")
+                except OSError:
+                    pass
 
     def save(self):
         # Written to a temporary file and renamed: opening the real file with "w" truncates it first,

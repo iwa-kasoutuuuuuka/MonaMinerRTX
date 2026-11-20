@@ -554,6 +554,10 @@ class MainWindow(QMainWindow):
         lbl_console_title.setStyleSheet("font-weight: bold; color: #94a3b8; font-size: 12px; margin-top: 4px;")
         dash_layout.addWidget(lbl_console_title)
         self.console = LogConsole()
+        if self.config_mgr.load_error:
+            self.console.append_log(
+                "設定ファイル config.json を読み込めなかったため、初期設定で起動しました。"
+                f"元のファイルは config.json.corrupt として残しています。({self.config_mgr.load_error})", "error")
         dash_layout.addWidget(self.console)
 
         self.tabs_main.addTab(tab_dashboard, "🏠 かんたん採掘 (ダッシュボード)")
@@ -1197,8 +1201,14 @@ class MainWindow(QMainWindow):
 
     def _on_benchmark_result(self, res: dict):
         self.btn_bench.setEnabled(True)
-        self.hw_mgr.set_measured(res.get("gpu_mhs"), res.get("cpu_mhs_per_thread"))
-        self.config_mgr.set("benchmark", {k: v for k, v in res.items() if not k.endswith("_error")})
+        # A half that failed this time (driver busy, DLL missing) keeps its previous measurement.
+        stored = dict(self.config_mgr.get("benchmark", {}) or {})
+        if res.get("gpu_mhs"):
+            stored.update(gpu_mhs=res["gpu_mhs"], gpu_name=res.get("gpu_name"))
+        if res.get("cpu_mhs_per_thread"):
+            stored.update(cpu_mhs_per_thread=res["cpu_mhs_per_thread"], cpu_threads=res.get("cpu_threads"))
+        self.hw_mgr.set_measured(stored.get("gpu_mhs"), stored.get("cpu_mhs_per_thread"))
+        self.config_mgr.set("benchmark", stored)
         modes = self.hw_mgr.get_mode_recommendation()["modes"]
         for key, card in self.mode_cards.items():
             card.set_est_hashrate(modes[key]["est_hashrate"])

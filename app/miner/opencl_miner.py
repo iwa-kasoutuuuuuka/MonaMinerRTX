@@ -343,7 +343,11 @@ class OpenCLMinerWorker(QThread):
                             self.log_message.emit(f"[Solo RPC] {err}", "warn")
                             rpc_err = err
                             t_rpc_err_log = now_mono
+                        # Nothing is hashed without a template: the display must not keep the last value.
+                        self.hashrate_update.emit(0.0, 0.0, 0.0)
+                        total_hashes_window = 0
                         self._sleep(0.5)
+                        t_start_window = time.perf_counter()
                         continue
                     if rpc_err is not None:
                         self.log_message.emit("[Solo RPC] ノードとの通信が回復しました。採掘を再開します。", "success")
@@ -375,8 +379,11 @@ class OpenCLMinerWorker(QThread):
                         return
                     # A pool restart or a short network drop used to end mining for good.
                     self.log_message.emit("プールとの接続が切断されました。再接続します...", "warn")
+                    self.hashrate_update.emit(0.0, 0.0, 0.0)
                     if not self._reconnect_pool():
                         return
+                    total_hashes_window = 0
+                    t_start_window = time.perf_counter()
                     last_job_key = None
                     cached_key = None
                     continue

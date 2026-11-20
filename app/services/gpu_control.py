@@ -41,6 +41,7 @@ class GpuHardwareController:
         self._nvml = None
         self._initialized = False
         self._device_count = 0
+        self._manual_fan_gpus = set()   # GPUs whose fans this app pinned to a manual speed
         self._init_nvml()
 
     def _init_nvml(self):
@@ -152,9 +153,14 @@ class GpuHardwareController:
         if self._nvml.nvmlDeviceGetHandleByIndex_v2(ctypes.c_uint(index), ctypes.byref(handle)) != NVML_SUCCESS:
             return False, "デバイスハンドル取得失敗"
 
-        # Try nvmlDeviceSetFanSpeed_v2 (fan 0)
+        # Every fan of the card: with only fan 0 set, the other fans of a 2-3 fan card stayed automatic.
+        ret = NVML_ERROR_UNKNOWN
         try:
-            ret = self._nvml.nvmlDeviceSetFanSpeed_v2(handle, ctypes.c_uint(0), ctypes.c_uint(percent))
+            for fan in range(self._fan_count(handle)):
+                ret = self._nvml.nvmlDeviceSetFanSpeed_v2(handle, ctypes.c_uint(fan), ctypes.c_uint(percent))
+                if ret != NVML_SUCCESS:
+                    break
+                self._manual_fan_gpus.add(index)
         except Exception:
             return False, "ファン制御機能が未サポートまたは権限不足です"
 
@@ -172,18 +178,36 @@ class GpuHardwareController:
         handle = ctypes.c_void_p()
         if self._nvml.nvmlDeviceGetHandleByIndex_v2(ctypes.c_uint(index), ctypes.byref(handle)) != NVML_SUCCESS:
             return False, "デバイスハンドル取得失敗"
+        ret = NVML_ERROR_UNKNOWN
         try:
-            ret = self._nvml.nvmlDeviceSetDefaultFanSpeed_v2(handle, ctypes.c_uint(0))
+            for fan in range(self._fan_count(handle)):
+                ret = self._nvml.nvmlDeviceSetDefaultFanSpeed_v2(handle, ctypes.c_uint(fan))
+                if ret != NVML_SUCCESS:
+                    break
         except Exception:
             return False, "ファン自動制御への復帰は未サポートです"
         if ret == NVML_SUCCESS:
+            self._manual_fan_gpus.discard(index)
             return True, "ファンを自動制御に戻しました"
         elif ret == NVML_ERROR_NO_PERMISSION:
             return False, "自動制御への復帰には管理者権限が必要です"
         return False, f"自動制御への復帰に失敗 (エラーコード: {ret})"
 
+    def _fan_count(self, handle) -> int:
+        count = ctypes.c_uint(0)
+        try:
+            if self._nvml.nvmlDeviceGetNumFans(handle, ctypes.byref(count)) == NVML_SUCCESS and count.value > 0:
+                return count.value
+        except Exception:
+            pass
+        return 1
+
     def shutdown(self):
         if self._initialized and self._nvml:
+            # A manual fan speed outlives the process: left pinned, the card could run a later heavy
+            # load (a game) at a speed that was chosen for mining. Hand the fans back to the driver.
+            for index in list(self._manual_fan_gpus):
+                self.set_fan_auto(index)
             try:
                 self._nvml.nvmlShutdown()
             except Exception:

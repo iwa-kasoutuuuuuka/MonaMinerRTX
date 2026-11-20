@@ -55,3 +55,6 @@ node/mainnet_data/
 node/monacoin.conf
 
 logs/
+
+# Local config backups / unreadable configs kept for recovery (hold the RPC password)
+config.json.*
