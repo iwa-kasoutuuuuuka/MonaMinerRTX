@@ -194,3 +194,40 @@ class TestGpuMineLoop(unittest.TestCase):
 
     def test_hybrid(self):
         self._run("hybrid")
+
+
+class TestSoloStaleRule(unittest.TestCase):
+    """Which finished scans may still be submitted in solo mode."""
+
+    class _Tpl:
+        def __init__(self, prev):
+            self.prev_hash_hex = prev
+
+    def _worker(self):
+        QCoreApplication.instance() or QCoreApplication([])
+        return OpenCLMinerWorker("eco", "solo", "cpu", "", "addr", "w", cpu_threads=1, hardware_mgr=FakeHardware())
+
+    def test_refetched_template_of_the_same_tip_keeps_work_valid(self):
+        # After 2^32 nonces the template is fetched again for the same tip: a new object, same block.
+        worker = self._worker()
+        old, new = self._Tpl("aa" * 32), self._Tpl("aa" * 32)
+        worker.current_template = new
+        worker._solo_tip = new.prev_hash_hex
+        self.assertFalse(worker._solo_stale(old))
+
+    def test_work_for_another_tip_is_stale(self):
+        worker = self._worker()
+        worker._solo_tip = "bb" * 32
+        self.assertTrue(worker._solo_stale(self._Tpl("aa" * 32)))
+
+    def test_template_already_used_for_a_block_is_stale(self):
+        worker = self._worker()
+        tpl = self._Tpl("aa" * 32)
+        worker._solo_tip = tpl.prev_hash_hex
+        tpl.submitted = True
+        self.assertTrue(worker._solo_stale(tpl))
+
+    def test_nothing_is_valid_between_a_submission_and_the_next_template(self):
+        worker = self._worker()
+        worker._solo_tip = None
+        self.assertTrue(worker._solo_stale(self._Tpl("aa" * 32)))

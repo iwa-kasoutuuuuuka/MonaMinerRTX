@@ -110,9 +110,15 @@ class ConfigManager:
                 print(f"[Config] Error loading config: {e}")
 
     def save(self):
+        # Written to a temporary file and renamed: opening the real file with "w" truncates it first,
+        # so a crash or power loss mid-write left an empty config (-> defaults on the next start).
+        tmp_path = self.filepath + ".tmp"
         try:
-            with open(self.filepath, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.filepath)
         except Exception as e:
             print(f"[Config] Error saving config: {e}")
 

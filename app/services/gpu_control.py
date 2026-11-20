@@ -165,6 +165,23 @@ class GpuHardwareController:
         else:
             return False, f"ファン設定失敗 (エラーコード: {ret})"
 
+    def set_fan_auto(self, index: int) -> Tuple[bool, str]:
+        """Hands fan control back to the driver's automatic curve (undoes set_fan_speed)."""
+        if not self.is_available or index >= self._device_count:
+            return False, "NVMLが利用できません"
+        handle = ctypes.c_void_p()
+        if self._nvml.nvmlDeviceGetHandleByIndex_v2(ctypes.c_uint(index), ctypes.byref(handle)) != NVML_SUCCESS:
+            return False, "デバイスハンドル取得失敗"
+        try:
+            ret = self._nvml.nvmlDeviceSetDefaultFanSpeed_v2(handle, ctypes.c_uint(0))
+        except Exception:
+            return False, "ファン自動制御への復帰は未サポートです"
+        if ret == NVML_SUCCESS:
+            return True, "ファンを自動制御に戻しました"
+        elif ret == NVML_ERROR_NO_PERMISSION:
+            return False, "自動制御への復帰には管理者権限が必要です"
+        return False, f"自動制御への復帰に失敗 (エラーコード: {ret})"
+
     def shutdown(self):
         if self._initialized and self._nvml:
             try:

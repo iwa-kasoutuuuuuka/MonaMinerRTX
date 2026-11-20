@@ -120,6 +120,6 @@ class BenchmarkWorker(QThread):
             CpuBackend.load()
             self.progress.emit(f"CPU ベンチマーク中 ({self.cpu_threads} スレッド) ...")
             out["cpu_mhs_per_thread"] = round(benchmark_cpu(self.cpu_threads) / self.cpu_threads, 3)
-        except CpuBackendUnavailable as e:
+        except Exception as e:   # any failure must still report, or the UI waits forever
             out["cpu_error"] = str(e)
         self.result.emit(out)

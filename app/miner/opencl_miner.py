@@ -29,6 +29,8 @@ CPU_MAX_CHUNK = 1 << 20
 CPU_WATT_PER_THREAD = 5.0   # rough estimate, only used when no power sensor is available
 NODE_WARMUP_POLL_S = 2.0         # solo: how often a node that is still starting up is asked again
 RPC_ERROR_LOG_INTERVAL_S = 30.0  # solo: an unchanged template error is repeated at most this often
+POOL_RECONNECT_MIN_S = 5.0       # pool: first wait before reconnecting, doubled up to the maximum
+POOL_RECONNECT_MAX_S = 60.0
 POOL_DEFAULT_HOST = "stratum1.vippool.net"
 POOL_DEFAULT_PORT = 8888
 
@@ -66,6 +68,8 @@ class OpenCLMinerWorker(QThread):
         self.stratum: StratumClient = None
         self.solo_client: RpcSoloClient = None
         self.current_template: SoloBlockTemplate = None
+        self._solo_tip = None      # solo: previous-block hash that work must build on (None: none valid)
+        self._pool_params = None   # pool: (host, port, user) for reconnects
         self.ctx_list = [] # one dict per GPU: context, kernel, buffers, local_wg, batch_size, ...
         self.use_gpu = device_target in ("gpu", "hybrid")
         self.use_cpu = device_target in ("cpu", "hybrid")
@@ -167,6 +171,14 @@ class OpenCLMinerWorker(QThread):
             return True
         except Exception as e:
             self.log_message.emit(f"OpenCL Multi-GPU 初期化失敗: {e}", "error")
+            # Half-initialised items (no kernel / buffers yet) would crash the mining loop when the
+            # worker carries on with the CPU only.
+            for item in self.ctx_list:
+                try:
+                    item["ctx"].release()
+                except Exception:
+                    pass
+            self.ctx_list.clear()
             return False
 
     def _connect(self) -> bool:
@@ -215,18 +227,41 @@ class OpenCLMinerWorker(QThread):
         else:
             full_user = self.worker_name
 
-        self.stratum = StratumClient(
-            host=host,
-            port=port,
-            username=full_user,
-            password=self.pool_password,
-            on_log=lambda msg, lvl: self.log_message.emit(f"[Stratum] {msg}", lvl),
-            on_new_job=self._on_new_stratum_job
-        )
+        self._pool_params = (host, port, full_user)
+        self.stratum = self._new_stratum()
         if not self.stratum.connect():
             self.log_message.emit("プールへの接続に失敗しました。", "error")
             return False
         return True
+
+    def _new_stratum(self) -> StratumClient:
+        host, port, user = self._pool_params
+        return StratumClient(
+            host=host,
+            port=port,
+            username=user,
+            password=self.pool_password,
+            on_log=lambda msg, lvl: self.log_message.emit(f"[Stratum] {msg}", lvl),
+            on_new_job=self._on_new_stratum_job
+        )
+
+    def _reconnect_pool(self) -> bool:
+        """Blocks until the pool connection is back (retry every 5 s, backing off to 60 s).
+        False when the worker was stopped meanwhile."""
+        delay = POOL_RECONNECT_MIN_S
+        while self._running:
+            old, self.stratum = self.stratum, None
+            if old:
+                old.close()
+            self._sleep(delay)
+            if not self._running:
+                return False
+            client = self._new_stratum()
+            self.stratum = client
+            if client.connect():
+                return True
+            delay = min(POOL_RECONNECT_MAX_S, delay * 2)
+        return False
 
     def _cleanup(self):
         if self.stratum:
@@ -238,11 +273,14 @@ class OpenCLMinerWorker(QThread):
         for item in self.ctx_list:
             try:
                 item["ctx"].finish()   # queued launches still reference host buffers held in item["queued"]
-                for launch in item["queued"]:
-                    item["ctx"].release_event(launch["event"])   # an event retains the context
+                for launch in item.get("queued", []):
+                    if launch.get("event"):
+                        item["ctx"].release_event(launch["event"])   # an event retains the context
             except Exception:
                 pass
             item["queued"] = []
+            item.pop("hold", None)
+            item.pop("collecting", None)
             try:
                 item["ctx"].release()
             except Exception:
@@ -275,6 +313,7 @@ class OpenCLMinerWorker(QThread):
         en2_counter = 0        # pool: extranonce2 of the current header
         last_job_key = None
         tpl_serial = 0
+        logged_tip = None      # solo: chain tip of the last "new template" log line
         t_last_poll = 0.0
         t_hi, t_lo = 0, 0
         rpc_err = None         # solo: last template error (logged once, then every RPC_ERROR_LOG_INTERVAL_S)
@@ -311,12 +350,18 @@ class OpenCLMinerWorker(QThread):
                         rpc_err = None
                     new_tip = self.current_template is None or tpl.prev_hash_hex != self.current_template.prev_hash_hex
                     if new_tip:
-                        self.log_message.emit(
-                            f"[Solo] 新ブロックテンプレート受信: 高さ #{tpl.height:,} "
-                            f"(Target: 0x{tpl.target_high:08x}{tpl.target_low:08x}..., 報酬: {tpl.coinbase_value / 1e8:.2f} MONA)",
-                            "info"
-                        )
+                        # Logged once per chain tip: a template is also re-fetched every time the 2^32
+                        # nonces of a header are used up (~15 s on a fast GPU), which used to repeat
+                        # the same line and push real events out of the log.
+                        if tpl.prev_hash_hex != logged_tip:
+                            logged_tip = tpl.prev_hash_hex
+                            self.log_message.emit(
+                                f"[Solo] 新ブロックテンプレート受信: 高さ #{tpl.height:,} "
+                                f"(Target: 0x{tpl.target_high:08x}{tpl.target_low:08x}..., 報酬: {tpl.coinbase_value / 1e8:.2f} MONA)",
+                                "info"
+                            )
                         self.current_template = tpl
+                        self._solo_tip = tpl.prev_hash_hex
                         tpl_serial += 1
                         cursor = 0
                 tpl = self.current_template
@@ -325,10 +370,16 @@ class OpenCLMinerWorker(QThread):
                 t_hi, t_lo = tpl.target_high, tpl.target_low
                 work["tpl"] = tpl
             else:
-                if not self.stratum.is_alive:
-                    if self._running:  # not caused by stop()
-                        self.log_message.emit("プールとの接続が切断されました。採掘を停止します。", "error")
-                    return
+                if self.stratum is None or not self.stratum.is_alive:
+                    if not self._running:  # caused by stop()
+                        return
+                    # A pool restart or a short network drop used to end mining for good.
+                    self.log_message.emit("プールとの接続が切断されました。再接続します...", "warn")
+                    if not self._reconnect_pool():
+                        return
+                    last_job_key = None
+                    cached_key = None
+                    continue
                 if self.stratum.authorized is False:
                     self.log_message.emit("プール認証に失敗したため採掘を停止します。ワーカー名・パスワードを確認してください。", "error")
                     return
@@ -380,6 +431,7 @@ class OpenCLMinerWorker(QThread):
                 # host memory of the non-blocking transfers lives in `launch` until it is collected
                 launch = {"batch": batch, "work": work, "t_enqueue": 0.0,
                           "count": (c_uint * 1)(0), "nonces": (c_uint * MAX_FOUND)(), "zero": (c_uint * 1)(0)}
+                item["hold"] = launch      # also if an OpenCL call below raises: freed only after finish()
                 if item["last_key"] != work_key:
                     launch["header"] = (c_uint * HEADER_BUF_WORDS).from_buffer_copy(kernel_header_buffer(header_76))
                     ctx.write_buffer(item["buf_header"], launch["header"], HEADER_BUF_BYTES, blocking=False)
@@ -421,6 +473,7 @@ class OpenCLMinerWorker(QThread):
                 if len(item["queued"]) < GPU_QUEUE_DEPTH and cursor < NONCE_SPACE:
                     continue   # queue not full yet: enqueue again first, then wait
                 launch = item["queued"].pop(0)
+                item["collecting"] = launch   # keeps its host buffers alive if wait_event raises
                 ctx = item["ctx"]
                 ctx.wait_event(launch["event"])
                 gpu_paced = True
@@ -433,9 +486,9 @@ class OpenCLMinerWorker(QThread):
                 count = launch["count"][0]
                 if count > 0:
                     nonces = [int(launch["nonces"][i]) for i in range(min(count, MAX_FOUND))]
-                    # Solo: a launch enqueued for an older template (the tip moved, or a block was
-                    # just found) can only produce a block the node refuses, so it is dropped.
-                    if not (solo and launch["work"]["tpl"] is not self.current_template):
+                    # Solo: a launch enqueued for an older chain tip, or for a template a block was
+                    # already submitted with, can only produce a block the node refuses: dropped.
+                    if not (solo and self._solo_stale(launch["work"]["tpl"])):
                         self._handle_found(f"GPU #{item['dev']['global_index']}", nonces, launch["work"])
 
                 total_hashes_window += launch["batch"]
@@ -460,9 +513,9 @@ class OpenCLMinerWorker(QThread):
                         continue
                     count, nonces, elapsed = future.result()
                     total_hashes_window += chunk
-                    # Solo: a scan started on an older template (the tip moved, or a block was just
-                    # submitted) can only produce a block the node refuses, so its result is dropped.
-                    if nonces and not (solo and job_work["tpl"] is not self.current_template):
+                    # Solo: a scan started on an older chain tip (or on a template already used for a
+                    # submitted block) can only produce a block the node refuses, so it is dropped.
+                    if nonces and not (solo and self._solo_stale(job_work["tpl"])):
                         self._handle_found("CPU", nonces, job_work)
                     if elapsed > 0.001:
                         # from this job's own size: several jobs finishing in one pass ran with older sizes
@@ -487,6 +540,12 @@ class OpenCLMinerWorker(QThread):
                 total_hashes_window = 0
                 t_start_window = now
 
+    def _solo_stale(self, tpl) -> bool:
+        """True when a result for `tpl` must not be submitted. Templates are compared by the chain
+        tip they build on, not by object: a template is re-fetched for the same tip whenever the
+        2^32 nonces of a header are used up, and results still in flight then remain valid blocks."""
+        return getattr(tpl, "submitted", False) or tpl.prev_hash_hex != self._solo_tip
+
     @staticmethod
     def _cpu_scan(header_76: bytes, start: int, count: int, t_hi: int, t_lo: int):
         t0 = time.perf_counter()
@@ -507,12 +566,16 @@ class OpenCLMinerWorker(QThread):
                 self.shares_update.emit(self.accepted_shares, self.rejected_shares)
                 self.log_message.emit(submit_msg, "success" if ok else "error")
                 # Either way the template is finished (new tip, or rejected): fetch a new one.
+                # Work still in flight stays invalid until the next template names the tip again.
+                tpl.submitted = True
+                self._solo_tip = None
                 self.current_template = None
                 return
             else:
-                if self.stratum:
+                stratum = self.stratum
+                if stratum:
                     job = work["job"]
-                    self.stratum.submit_share(
+                    stratum.submit_share(
                         job_id=job.job_id,
                         extranonce2=work["en2_hex"],
                         ntime=job.ntime,
@@ -532,6 +595,7 @@ class OpenCLMinerWorker(QThread):
 
     def stop(self):
         self._running = False
-        if self.stratum:
-            self.stratum.close()
+        stratum = self.stratum   # the worker thread may set the attribute to None at any moment
+        if stratum:
+            stratum.close()
         self.wait(2000)

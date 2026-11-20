@@ -7,7 +7,7 @@ import ipaddress
 import json
 import socket
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Callable, Dict, Any, Optional
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -147,6 +147,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 class WebServerRequestHandler(BaseHTTPRequestHandler):
+    # A connection that sends nothing (browser preconnect, port scanner) is dropped after 5 s. With the
+    # old single-threaded server one such connection blocked every request and made stop() hang.
+    timeout = 5
     get_status_callback: Optional[Callable[[], Dict[str, Any]]] = None
     start_callback: Optional[Callable[[], None]] = None
     stop_callback: Optional[Callable[[], None]] = None
@@ -246,7 +249,7 @@ class WebMonitoringServer:
     def __init__(self, host: str = LOCAL_HOST, port: int = 8888):
         self.host = host
         self.port = port
-        self.server: Optional[HTTPServer] = None
+        self.server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self.is_running = False
 
@@ -259,7 +262,8 @@ class WebMonitoringServer:
         WebServerRequestHandler.stop_callback = stop_fn
 
         try:
-            self.server = HTTPServer((self.host, self.port), WebServerRequestHandler)
+            self.server = ThreadingHTTPServer((self.host, self.port), WebServerRequestHandler)
+            self.server.daemon_threads = True
             self.is_running = True
             self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self._thread.start()

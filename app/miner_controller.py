@@ -5,6 +5,7 @@ import time
 import random
 import subprocess
 from PySide6.QtCore import QObject, Signal, QThread
+from app.thread_keeper import start_kept
 from app.miner.opencl_miner import OpenCLMinerWorker
 
 class SimulatorWorker(QThread):
@@ -208,7 +209,14 @@ class ProcessWorker(QThread):
 
     def run(self):
         cmd = [self.miner_path] + self.args
-        self.log_message.emit(f"実行コマンド: {' '.join(cmd)}", "info")
+        # The log is shown on the login-less web dashboard: never print the pool / RPC password.
+        shown = list(cmd)
+        for i, arg in enumerate(shown):
+            if arg in ("-p", "--pass", "--password") and i + 1 < len(shown):
+                shown[i + 1] = "****"
+            elif arg in ("-O", "--userpass") and i + 1 < len(shown) and ":" in shown[i + 1]:
+                shown[i + 1] = shown[i + 1].split(":", 1)[0] + ":****"
+        self.log_message.emit(f"実行コマンド: {' '.join(shown)}", "info")
 
         try:
             self.process = subprocess.Popen(
@@ -304,7 +312,7 @@ class MinerController(QObject):
         worker.log_message.connect(self.log_received)
         worker.finished.connect(self._on_worker_finished)
         self.worker = worker
-        worker.start()
+        start_kept(worker)   # stays referenced until its thread has really ended
 
     def start_mining(self, mode: str, target_type: str, device_target: str,
                      pool_url: str, wallet: str, worker: str,

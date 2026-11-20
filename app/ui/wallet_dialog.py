@@ -11,11 +11,12 @@ from PySide6.QtWidgets import (
     QFrame, QMessageBox, QApplication
 )
 from app.services.wallet_service import fetch_wallet_history
+from app.thread_keeper import start_kept
 
 
 class WalletFetchWorker(QThread):
     """バックグラウンドでウォレット情報を取得するスレッド"""
-    finished = Signal(dict)
+    loaded = Signal(dict)   # not `finished`: that name would shadow QThread.finished
 
     def __init__(self, address: str):
         super().__init__()
@@ -23,7 +24,7 @@ class WalletFetchWorker(QThread):
 
     def run(self):
         res = fetch_wallet_history(self.address)
-        self.finished.emit(res)
+        self.loaded.emit(res)
 
 
 class WalletHistoryDialog(QDialog):
@@ -218,8 +219,8 @@ class WalletHistoryDialog(QDialog):
         self.lbl_status.setText("⏳ ネットワークから最新の入出金履歴を取得中...")
 
         self.worker = WalletFetchWorker(self.address)
-        self.worker.finished.connect(self._on_data_loaded)
-        self.worker.start()
+        self.worker.loaded.connect(self._on_data_loaded)
+        start_kept(self.worker)
 
     def _on_data_loaded(self, res: dict):
         self.btn_refresh.setEnabled(True)

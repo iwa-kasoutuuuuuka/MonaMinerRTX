@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
+from app import thread_keeper
+from app.thread_keeper import start_kept
 
 from app.hardware import HardwareManager
 from app.miner_controller import MinerController
@@ -1059,6 +1061,7 @@ class MainWindow(QMainWindow):
             self.auto_started_by_idle = True
             self.console.append_log("💤 PCアイドルを検知: スマート自動マイニングを開始しました。", "success")
             self._toggle_mining()
+            self.auto_started_by_idle = self.miner_ctrl.is_mining
         elif not is_idle and self.miner_ctrl.is_mining and self.auto_started_by_idle:
             self.auto_started_by_idle = False
             self.console.append_log("⚡ PC操作を検知: スマート自動マイニングを一時停止しました。", "warn")
@@ -1159,6 +1162,10 @@ class MainWindow(QMainWindow):
         if fan > 0:
             ok, msg = self.gpu_ctrl.set_fan_speed(0, fan)
             msg_list.append(f"ファン制御: {msg}")
+        else:
+            # 0 = automatic: really undo an earlier manual speed (it used to stay pinned)
+            ok, msg = self.gpu_ctrl.set_fan_auto(0)
+            msg_list.append(f"ファン制御: {msg}")
 
         result_txt = "\n".join(msg_list) if msg_list else "自動制御に設定されています。"
         self.console.append_log(f"[HW制御] {result_txt}", "info")
@@ -1186,7 +1193,7 @@ class MainWindow(QMainWindow):
         self._benchmark_worker = BenchmarkWorker(self.spin_threads.value())
         self._benchmark_worker.progress.connect(self.lbl_bench.setText)
         self._benchmark_worker.result.connect(self._on_benchmark_result)
-        self._benchmark_worker.start()
+        start_kept(self._benchmark_worker)
 
     def _on_benchmark_result(self, res: dict):
         self.btn_bench.setEnabled(True)
@@ -1272,6 +1279,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_mining(self):
         if self.miner_ctrl.is_mining:
+            # Whoever stops it: the session is over, so a later manual session must not be treated
+            # as "started by idle" (and stopped at the next key press).
+            self.auto_started_by_idle = False
             self.miner_ctrl.stop_mining()
             self.mining_start_time = None
             if self.discord_notifier.enabled:
@@ -1406,6 +1416,8 @@ class MainWindow(QMainWindow):
             )
 
     def _on_miner_status_changed(self, status: str):
+        if not self.miner_ctrl.is_mining:
+            self.auto_started_by_idle = False   # also when the miner ended on its own
         self.setWindowTitle(f"MonaMiner RTX / RX v2.2.3 - [{status}]")
         if not self.miner_ctrl.is_mining:
             self.btn_toggle_mining.setObjectName("start_btn")
@@ -1514,7 +1526,7 @@ class MainWindow(QMainWindow):
 
         self._node_worker = NodeSyncWorker(host, port, user, passwd)
         self._node_worker.sync_result.connect(self._on_node_sync_updated)
-        self._node_worker.start()
+        start_kept(self._node_worker)
 
     def _on_node_sync_updated(self, info: dict):
         self._last_node_info = info
@@ -1686,6 +1698,7 @@ class MainWindow(QMainWindow):
                 worker.wait(20000)
         if self.miner_ctrl.is_mining:
             self.miner_ctrl.stop_mining()
+        thread_keeper.wait_all(20000)   # every other QThread still winding down (stopped miners, ...)
         self.web_server.stop()
         self.idle_tracker.stop()
         self.gpu_ctrl.shutdown()

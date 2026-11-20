@@ -11,7 +11,11 @@ import struct
 import urllib.request
 import urllib.error
 import hashlib
+import time
 from typing import Optional, Tuple, Dict, Any
+
+SUBMIT_ATTEMPTS = 3          # submitblock: tries when the node cannot be reached (transport errors only)
+SUBMIT_RETRY_DELAY_S = 1.0
 
 RPC_IN_WARMUP = -28  # the node answers, but is still starting up
 
@@ -305,11 +309,23 @@ class RpcSoloClient:
         full_block = template.assemble_full_block(nonce)
         block_hex = full_block.hex()
         
-        res = self.call("submitblock", [block_hex])
+        # A found block is worth too much to lose to one timeout or refused connection: transport
+        # errors (code -1 from call()) are retried. After a retry "duplicate" means that an earlier
+        # attempt did reach the node, i.e. the block was accepted.
+        retried = False
+        for attempt in range(SUBMIT_ATTEMPTS):
+            res = self.call("submitblock", [block_hex], timeout=30.0)
+            err = res.get("error") if isinstance(res, dict) else None
+            if not (err and err.get("code") == -1) or attempt == SUBMIT_ATTEMPTS - 1:
+                break
+            retried = True
+            time.sleep(SUBMIT_RETRY_DELAY_S)
         if "error" in res and res["error"]:
             return False, f"拒絶 (RPCエラー): {res['error'].get('message')}"
-            
+
         result = res.get("result")
+        if retried and result == "duplicate":
+            result = None
         # Bitcoin/Monacoin Core submitblock returns None on success, or a string on failure (e.g. 'duplicate', 'high-hash')
         if result is None:
             return True, f"★ ブロック採掘・承認成功！ (ブロック高 #{template.height}, 報酬: {template.coinbase_value / 1e8:.2f} MONA)"

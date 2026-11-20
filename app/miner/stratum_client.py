@@ -129,6 +129,14 @@ class StratumClient:
             self.sock.settimeout(15.0)
             self.sock.connect((self.host, self.port))
             self.sock.settimeout(None)
+            # Without keepalive a half-open connection (router reboot, pool host gone) never errors:
+            # recv() blocks forever and the miner keeps hashing a dead job.
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                if hasattr(socket, "SIO_KEEPALIVE_VALS"):
+                    self.sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60000, 10000))   # idle 60 s, probe 10 s
+            except (OSError, ValueError):
+                pass
             self._running = True
 
             # Start listener thread

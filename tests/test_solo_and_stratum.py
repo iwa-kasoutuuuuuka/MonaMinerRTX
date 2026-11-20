@@ -180,3 +180,55 @@ class TestStratum(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSubmitBlockRetry(unittest.TestCase):
+    """submitblock must survive a node that is briefly unreachable."""
+
+    class _Tpl:
+        height = 100
+        coinbase_value = 625000000
+
+        def assemble_full_block(self, nonce):
+            return b"\x00" * 80
+
+    def _client(self, answers):
+        import app.miner.rpc_solo_client as mod
+        client = mod.RpcSoloClient.__new__(mod.RpcSoloClient)
+        calls = []
+
+        def call(method, params=None, timeout=10.0):
+            calls.append(method)
+            return answers[min(len(calls), len(answers)) - 1]
+
+        client.call = call
+        self._old_delay, mod.SUBMIT_RETRY_DELAY_S = mod.SUBMIT_RETRY_DELAY_S, 0.0
+        self.addCleanup(setattr, mod, "SUBMIT_RETRY_DELAY_S", self._old_delay)
+        return client, calls
+
+    def test_transport_error_is_retried(self):
+        down = {"error": {"code": -1, "message": "timed out"}}
+        client, calls = self._client([down, {"result": None, "error": None}])
+        ok, _ = client.submit_block(self._Tpl(), 1)
+        self.assertTrue(ok)
+        self.assertEqual(len(calls), 2)
+
+    def test_duplicate_after_a_retry_means_the_first_attempt_was_accepted(self):
+        down = {"error": {"code": -1, "message": "timed out"}}
+        client, _ = self._client([down, {"result": "duplicate", "error": None}])
+        self.assertTrue(client.submit_block(self._Tpl(), 1)[0])
+
+    def test_verification_failure_is_not_retried(self):
+        client, calls = self._client([{"result": "high-hash", "error": None}])
+        self.assertFalse(client.submit_block(self._Tpl(), 1)[0])
+        self.assertEqual(len(calls), 1)
+
+    def test_plain_duplicate_stays_a_rejection(self):
+        client, _ = self._client([{"result": "duplicate", "error": None}])
+        self.assertFalse(client.submit_block(self._Tpl(), 1)[0])
+
+    def test_gives_up_after_the_last_attempt(self):
+        down = {"error": {"code": -1, "message": "refused"}}
+        client, calls = self._client([down])
+        self.assertFalse(client.submit_block(self._Tpl(), 1)[0])
+        self.assertEqual(len(calls), 3)
