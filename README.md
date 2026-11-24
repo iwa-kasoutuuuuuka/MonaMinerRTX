@@ -459,6 +459,42 @@ PyInstaller により、必要なDLL・アプリアイコン・設定ファイ�
 
 ---
 
+## 🤖 AI エージェント連携 (MCP サーバー)
+
+`mcp_server.py` は [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。Claude Code や Antigravity などの MCP 対応クライアントから、採掘の状態確認と開始・停止ができます（例:「マイナーの状態を見て」「採掘を止めて」）。
+
+| ツール | 内容 |
+| :--- | :--- |
+| `get_status` | 採掘中かどうか、ハッシュレート、消費電力、GPU 温度、ファン、シェア数、電気代、稼働時間 |
+| `get_logs` | 直近の動作ログ（`lines` で行数を指定、既定 30） |
+| `start_mining` | アプリに保存されている設定で採掘を開始 |
+| `stop_mining` | 採掘を停止（アプリは終了しません） |
+
+- **前提**: MonaMiner RTX 本体が起動していて、Web ダッシュボードが有効（既定）であること。MCP サーバーはダッシュボードの API (`http://127.0.0.1:8888`) を呼び出すだけの中継役です。
+- **必要なもの**: Python 3.8 以降のみ（標準ライブラリだけで動作。ソース版に同梱、ポータブル版 ZIP には含まれません）。
+- 接続先を変える場合は環境変数 `MONAMINER_URL` を指定します（既定は `config.json` の `web_dashboard_port`）。
+
+### Claude Code
+このフォルダーには `.mcp.json` が含まれているので、このフォルダーで `claude` を起動して `monaminer` サーバーを承認するだけで使えます。どのフォルダーからでも使いたい場合は、次のように登録します（パスは実際の場所に合わせてください）。
+```powershell
+claude mcp add --scope user monaminer -- python E:\Zmona-miner-gui\mcp_server.py
+```
+
+### Antigravity
+MCP サーバーの設定ファイル `mcp_config.json`（Windows では通常 `%USERPROFILE%\.gemini\config\mcp_config.json`。Antigravity の MCP サーバー管理画面から開けます）の `mcpServers` に追加し、MCP サーバーを再読み込みします。
+```json
+{
+  "mcpServers": {
+    "monaminer": {
+      "command": "python",
+      "args": ["E:\Zmona-miner-gui\mcp_server.py"]
+    }
+  }
+}
+```
+
+---
+
 ## 🛠️ 自己診断・デバッグツール (`diagnose.py`)
 
 システムの動作状況やネットワーク疎通をワンクリックで診断できます。
@@ -497,6 +533,9 @@ python node/test_solo_submit.py
 ---
 
 ## 📋 更新履歴 (Changelog)
+
+### ソース版の更新 (2026-11-24) - MCP サーバー
+* **MCP サーバー `mcp_server.py` を追加**: Claude Code / Antigravity などの MCP クライアントから、状態確認・ログ取得・採掘の開始/停止ができます（ソース版のみ。上の「AI エージェント連携」を参照）。
 
 ### v2.2.4 (2026-11-21) - 安定性の修正・高速化・配布サイズ削減
 * **数日おきに GUI が突然終了する問題を修正**: 実行中の QThread が破棄されて Qt がプロセスごと強制終了していました（`QThread: Destroyed while thread is still running`）。起動したスレッドを、本当に終了するまで必ず保持する仕組み（`app/thread_keeper.py`）に統一しました。
@@ -732,6 +771,8 @@ mona-miner-gui/
 ├── run.bat                 # 開発版起動用バッチファイル
 ├── main.py                 # アプリケーションエントリーポイント
 ├── diagnose.py             # システム自己診断・デバッグスクリプト
+├── mcp_server.py           # MCP サーバー (Claude Code / Antigravity 連携)
+├── .mcp.json               # Claude Code 用の MCP サーバー登録
 ├── build_portable.py       # 配布用ポータブル版ビルドスクリプト
 ├── config.json             # ユーザー設定自動保存ファイル
 ├── dist/                   # ポータブル版出力先
